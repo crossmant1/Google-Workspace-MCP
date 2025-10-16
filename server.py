@@ -33,7 +33,7 @@ def root():
 @app.get("/auth")
 def start_auth():
     if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
-    raise HTTPException(status_code=500, detail="OAuth environment variables missing")
+        raise HTTPException(status_code=500, detail="OAuth environment variables missing")
 
 
 from urllib.parse import urlencode
