@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
-from fastmcp import MCPServer
+from fastmcp import fastMCP
 from dotenv import load_dotenv
 import os, requests, json
 
