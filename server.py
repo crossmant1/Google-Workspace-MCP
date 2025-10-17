@@ -73,7 +73,7 @@ def oauth_callback(request: Request):
     return JSONResponse({"status": "connected", "owner": OWNER_EMAIL})
 
 
-@mcp.resource("google_drive_list")
+@mcp.resource("/google_drive_list")
 async def google_drive_list():
     if not stored_token:
         raise HTTPException(status_code=403, detail="No Google account connected yet.")
