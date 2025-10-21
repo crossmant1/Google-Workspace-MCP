@@ -6,24 +6,26 @@ import os, requests
 
 load_dotenv()
 
-# MCP server instance
+# MCP instance (ASGI app)
 mcp = FastMCP()
 
-# FastAPI app to mount MCP
+# FastAPI root app
 app = FastAPI(title="Google Drive MCP Server")
+
+# Mount the MCP ASGI app under /mcp
+app.mount("/mcp", mcp)
 
 # Environment variables
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 OWNER_EMAIL = os.getenv("OWNER_EMAIL", "owner@example.com")
-
 SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
 
 # In-memory token storage for single user
 stored_token = None
 
-# --- Health / root route ---
+# --- Health check ---
 @app.get("/")
 def root():
     return {"status": "running", "owner": OWNER_EMAIL}
@@ -88,6 +90,3 @@ async def google_drive_list():
     service = build("drive", "v3", credentials=creds)
     res = service.files().list(pageSize=20, fields="files(id,name)").execute()
     return {"files": res.get("files", [])}
-
-# --- Mount MCP under /mcp ---
-app.mount("/mcp", mcp.app)
