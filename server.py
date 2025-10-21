@@ -9,7 +9,7 @@ load_dotenv()
 
 
 app = FastAPI(title="MCP Google Server (Single User)")
-mcp = FastMCP(app)
+mcp = FastMCP()
 
 
 
@@ -98,6 +98,7 @@ async def google_drive_list():
     res = service.files().list(pageSize=20, fields="files(id,name)").execute()
     return {"files": res.get("files", [])}
 
+mcp.mount_to(app)
 
 if __name__ == "__main__":
     import uvicorn
