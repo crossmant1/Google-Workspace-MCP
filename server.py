@@ -8,7 +8,7 @@ import os, requests, json
 load_dotenv()
 
 
-app = FastMCP(title="MCP Google Server (Single User)")
+mcp = FastMCP(title="MCP Google Server (Single User)")
 
 
 
@@ -25,12 +25,12 @@ SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
 stored_token = None
 
 
-@app.get("/")
+@mcp.get("/")
 def root():
     return {"status": "running", "owner": OWNER_EMAIL}
 
 
-@app.get("/auth")
+@mcp.get("/auth")
 def start_auth():
     if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
         raise HTTPException(status_code=500, detail="OAuth environment variables missing")
