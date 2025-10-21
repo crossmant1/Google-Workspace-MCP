@@ -98,7 +98,7 @@ async def google_drive_list():
     res = service.files().list(pageSize=20, fields="files(id,name)").execute()
     return {"files": res.get("files", [])}
 
-mcp.mount_to(app)
+mcp.init_app(app)
 
 if __name__ == "__main__":
     import uvicorn
