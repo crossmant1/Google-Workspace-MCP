@@ -9,7 +9,8 @@ load_dotenv()
 
 
 app = FastAPI(title="MCP Google Server (Single User)")
-mcp = FastMCP(app)
+mcp = FastMCP()
+mcp.mount(app)
 
 
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
