@@ -8,7 +8,7 @@ import os, requests, json
 load_dotenv()
 
 
-mcp = FastMCP(title="MCP Google Server (Single User)")
+mcp = FastMCP()
 
 
 
@@ -48,7 +48,7 @@ def start_auth():
     return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{params}"}
 
 
-@app.get("/oauth2callback")
+@mcp.get("/oauth2callback")
 def oauth_callback(request: Request):
     global stored_token
     code = request.query_params.get("code")
