@@ -17,8 +17,8 @@ SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
 # In-memory token storage for single user
 stored_token = None
 
-# Create MCP instance with SSE support
-mcp = FastMCP("Google Drive MCP", dependencies=["fastapi", "httpx"])
+# Create MCP instance
+mcp = FastMCP("Google Drive MCP")
 
 # Create root FastAPI app
 app = FastAPI(title="Google Drive MCP Server")
@@ -169,7 +169,8 @@ async def get_auth_status() -> dict:
     }
 
 # Mount MCP SSE endpoint at /sse (this is what MCP clients connect to)
-app.mount("/sse", mcp.get_asgi_app())
+# FastMCP instance itself is the ASGI app
+app.mount("/sse", mcp)
 
 # Export for uvicorn
 if __name__ == "__main__":
