@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP
-from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 import os
 import requests
@@ -162,19 +161,9 @@ def health():
         "owner": OWNER_EMAIL
     }
 
-mcp_asgi = mcp.get_asgi_app()
-
-# Middleware to route MCP requests to the MCP app
-class MCPRouter(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        # Let OAuth routes through
-        if request.url.path in ["/auth", "/oauth2callback", "/health"]:
-            return await call_next(request)
-        
-        # Everything else goes to MCP
-        return await mcp_asgi(request.scope, request.receive, request._send)
-
-app.add_middleware(MCPRouter)
+# Mount MCP at root, but it will only handle MCP protocol requests
+# FastAPI will handle the specific routes defined above first
+app.mount("/", mcp)
 
 # Export for uvicorn
 if __name__ == "__main__":
