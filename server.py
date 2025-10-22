@@ -163,7 +163,7 @@ def health():
     }
 
 # Get the MCP ASGI app
-mcp_app = mcp
+mcp_app = mcp.get_asgi_app()
 
 # Middleware to route MCP requests to the MCP app
 class MCPRouter(BaseHTTPMiddleware):
