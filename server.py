@@ -162,8 +162,7 @@ def health():
         "owner": OWNER_EMAIL
     }
 
-# Get the MCP ASGI app
-mcp_app = mcp.get_asgi_app()
+mcp_asgi = mcp.get_asgi_app()
 
 # Middleware to route MCP requests to the MCP app
 class MCPRouter(BaseHTTPMiddleware):
@@ -173,7 +172,7 @@ class MCPRouter(BaseHTTPMiddleware):
             return await call_next(request)
         
         # Everything else goes to MCP
-        return await mcp_app(request.scope, request.receive, request._send)
+        return await mcp_asgi(request.scope, request.receive, request._send)
 
 app.add_middleware(MCPRouter)
 
