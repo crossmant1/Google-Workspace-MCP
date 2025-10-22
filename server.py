@@ -13,7 +13,7 @@ mcp = FastMCP()
 app = FastAPI(title="Google Drive MCP Server")
 
 # Mount the MCP ASGI app under /mcp
-app.mount("/mcp", mcp)
+mcp.mount("/mcp", mcp)
 
 # Environment variables
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
