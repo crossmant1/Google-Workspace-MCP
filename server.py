@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP
+from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 import os
 import requests
@@ -19,62 +20,6 @@ stored_token = None
 
 # Create MCP instance
 mcp = FastMCP("Google Drive MCP")
-
-# Create root FastAPI app
-app = FastAPI(title="Google Drive MCP Server")
-
-# --- Root endpoints ---
-@app.get("/")
-def root():
-    return {
-        "status": "running",
-        "owner": OWNER_EMAIL,
-        "mcp_endpoint": "/sse",
-        "auth_endpoint": "/auth"
-    }
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "authenticated": stored_token is not None}
-
-# --- OAuth start ---
-@app.get("/auth")
-def start_auth():
-    if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
-        raise HTTPException(status_code=500, detail="OAuth environment variables missing")
-
-    from urllib.parse import urlencode
-    params = urlencode({
-        "client_id": CLIENT_ID,
-        "redirect_uri": REDIRECT_URI,
-        "response_type": "code",
-        "scope": " ".join(SCOPES),
-        "access_type": "offline",
-        "prompt": "consent",
-    })
-    return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{params}"}
-
-# --- OAuth callback ---
-@app.get("/oauth2callback")
-def oauth_callback(request: Request):
-    global stored_token
-    code = request.query_params.get("code")
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing code")
-
-    token_resp = requests.post("https://oauth2.googleapis.com/token", data={
-        "code": code,
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "redirect_uri": REDIRECT_URI,
-        "grant_type": "authorization_code",
-    })
-
-    if token_resp.status_code != 200:
-        raise HTTPException(status_code=500, detail=f"Token exchange failed: {token_resp.text}")
-
-    stored_token = token_resp.json()
-    return JSONResponse({"status": "connected", "owner": OWNER_EMAIL})
 
 # --- MCP Tools ---
 @mcp.tool()
@@ -168,9 +113,66 @@ async def get_auth_status() -> dict:
         "message": "Connected to Google Drive" if stored_token else "Not authenticated. Please visit /auth to connect."
     }
 
-# Mount MCP SSE endpoint at /sse (this is what MCP clients connect to)
-# FastMCP instance itself is the ASGI app
-app.mount("/sse", mcp)
+# Create wrapper FastAPI app for OAuth
+app = FastAPI(title="Google Drive MCP Server")
+
+# OAuth endpoints
+@app.get("/auth")
+def start_auth():
+    if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
+        raise HTTPException(status_code=500, detail="OAuth environment variables missing")
+
+    from urllib.parse import urlencode
+    params = urlencode({
+        "client_id": CLIENT_ID,
+        "redirect_uri": REDIRECT_URI,
+        "response_type": "code",
+        "scope": " ".join(SCOPES),
+        "access_type": "offline",
+        "prompt": "consent",
+    })
+    return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{params}"}
+
+@app.get("/oauth2callback")
+def oauth_callback(request: Request):
+    global stored_token
+    code = request.query_params.get("code")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing code")
+
+    token_resp = requests.post("https://oauth2.googleapis.com/token", data={
+        "code": code,
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "redirect_uri": REDIRECT_URI,
+        "grant_type": "authorization_code",
+    })
+
+    if token_resp.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"Token exchange failed: {token_resp.text}")
+
+    stored_token = token_resp.json()
+    return JSONResponse({"status": "connected", "owner": OWNER_EMAIL})
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok", 
+        "authenticated": stored_token is not None,
+        "owner": OWNER_EMAIL
+    }
+
+# Middleware to route MCP requests to the MCP app
+class MCPRouter(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Let OAuth routes through
+        if request.url.path in ["/auth", "/oauth2callback", "/health"]:
+            return await call_next(request)
+        
+        # Everything else goes to MCP
+        return await mcp(request.scope, request.receive, request._send)
+
+app.add_middleware(MCPRouter)
 
 # Export for uvicorn
 if __name__ == "__main__":
