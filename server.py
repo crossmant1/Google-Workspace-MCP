@@ -162,12 +162,39 @@ def health():
         "owner": OWNER_EMAIL
     }
 
-# Get FastMCP's internal app and include its routes in our app
-mcp_app = mcp.app
+# Add MCP routes to the FastAPI app
+# FastMCP provides SSE endpoint for MCP protocol
+@app.post("/mcp/v1/messages")
+async def mcp_messages(request: Request):
+    """Handle MCP messages"""
+    # Get the FastMCP router and handle the request
+    from starlette.responses import StreamingResponse
+    import json
+    
+    body = await request.json()
+    
+    # Process the MCP request through FastMCP's internal handler
+    # This is a workaround - we'll need to access FastMCP's internals
+    try:
+        # Import FastMCP's internal components
+        from fastmcp.server import MCPServer
+        
+        # Create a response
+        result = await mcp._mcp_server.handle_request(body)
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-# Include all routes from the MCP app into our main app
-for route in mcp_app.routes:
-    app.routes.append(route)
+@app.get("/sse")
+async def sse_endpoint(request: Request):
+    """SSE endpoint for MCP protocol"""
+    from starlette.responses import StreamingResponse
+    
+    async def event_generator():
+        # This would need proper implementation based on FastMCP's SSE handling
+        yield "data: {}\n\n"
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 # Export for uvicorn
 if __name__ == "__main__":
