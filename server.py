@@ -112,15 +112,18 @@ async def get_auth_status() -> dict:
         "message": "Connected to Google Drive" if stored_token else "Not authenticated. Please visit /auth to connect."
     }
 
-# Create the main app using FastMCP's run method which returns a FastAPI app
-# We'll add our OAuth routes to it
-app = FastAPI(title="Google Drive MCP Server")
+# Create the MCP ASGI app - this creates a Starlette app with the MCP endpoint at /mcp/
+mcp_asgi = mcp.http_app(path='/mcp')
 
-# OAuth endpoints
-@app.get("/auth")
-def start_auth():
+# Create a Starlette app to combine everything
+from starlette.applications import Starlette
+from starlette.routing import Mount, Route
+from starlette.responses import JSONResponse as StarletteJSONResponse
+
+# Define OAuth routes
+async def start_auth(request):
     if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
-        raise HTTPException(status_code=500, detail="OAuth environment variables missing")
+        return StarletteJSONResponse({"error": "OAuth environment variables missing"}, status_code=500)
 
     from urllib.parse import urlencode
     params = urlencode({
@@ -131,14 +134,13 @@ def start_auth():
         "access_type": "offline",
         "prompt": "consent",
     })
-    return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{params}"}
+    return StarletteJSONResponse({"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{params}"})
 
-@app.get("/oauth2callback")
-def oauth_callback(request: Request):
+async def oauth_callback(request):
     global stored_token
     code = request.query_params.get("code")
     if not code:
-        raise HTTPException(status_code=400, detail="Missing code")
+        return StarletteJSONResponse({"error": "Missing code"}, status_code=400)
 
     token_resp = requests.post("https://oauth2.googleapis.com/token", data={
         "code": code,
@@ -149,52 +151,41 @@ def oauth_callback(request: Request):
     })
 
     if token_resp.status_code != 200:
-        raise HTTPException(status_code=500, detail=f"Token exchange failed: {token_resp.text}")
+        return StarletteJSONResponse({"error": f"Token exchange failed: {token_resp.text}"}, status_code=500)
 
     stored_token = token_resp.json()
-    return JSONResponse({"status": "connected", "owner": OWNER_EMAIL})
+    return StarletteJSONResponse({"status": "connected", "owner": OWNER_EMAIL})
 
-@app.get("/health")
-def health():
-    return {
+async def health(request):
+    return StarletteJSONResponse({
         "status": "ok", 
         "authenticated": stored_token is not None,
         "owner": OWNER_EMAIL
-    }
+    })
 
-# Add MCP routes to the FastAPI app
-# FastMCP provides SSE endpoint for MCP protocol
-@app.post("/mcp/v1/messages")
-async def mcp_messages(request: Request):
-    """Handle MCP messages"""
-    # Get the FastMCP router and handle the request
-    from starlette.responses import StreamingResponse
-    import json
-    
-    body = await request.json()
-    
-    # Process the MCP request through FastMCP's internal handler
-    # This is a workaround - we'll need to access FastMCP's internals
-    try:
-        # Import FastMCP's internal components
-        from fastmcp.server import MCPServer
-        
-        # Create a response
-        result = await mcp._mcp_server.handle_request(body)
-        return JSONResponse(result)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+async def root(request):
+    return StarletteJSONResponse({
+        "service": "Google Drive MCP Server",
+        "endpoints": {
+            "auth": "/auth - Start OAuth flow",
+            "callback": "/oauth2callback - OAuth callback",
+            "health": "/health - Health check",
+            "mcp": "/mcp/ - MCP protocol endpoint (POST only)"
+        },
+        "authenticated": stored_token is not None
+    })
 
-@app.get("/sse")
-async def sse_endpoint(request: Request):
-    """SSE endpoint for MCP protocol"""
-    from starlette.responses import StreamingResponse
-    
-    async def event_generator():
-        # This would need proper implementation based on FastMCP's SSE handling
-        yield "data: {}\n\n"
-    
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+# Create the main app using Starlette and mount everything
+app = Starlette(
+    routes=[
+        Route("/", root),
+        Route("/auth", start_auth),
+        Route("/oauth2callback", oauth_callback),
+        Route("/health", health),
+        Mount("/", mcp_asgi),  # Mount MCP at root - it will handle /mcp/ path
+    ],
+    lifespan=mcp_asgi.lifespan,  # CRITICAL: Pass MCP's lifespan
+)
 
 # Export for uvicorn
 if __name__ == "__main__":
