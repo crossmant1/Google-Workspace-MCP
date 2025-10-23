@@ -112,7 +112,8 @@ async def get_auth_status() -> dict:
         "message": "Connected to Google Drive" if stored_token else "Not authenticated. Please visit /auth to connect."
     }
 
-# Create wrapper FastAPI app for OAuth
+# Create the main app using FastMCP's run method which returns a FastAPI app
+# We'll add our OAuth routes to it
 app = FastAPI(title="Google Drive MCP Server")
 
 # OAuth endpoints
@@ -161,9 +162,12 @@ def health():
         "owner": OWNER_EMAIL
     }
 
-# Mount MCP at root, but it will only handle MCP protocol requests
-# FastAPI will handle the specific routes defined above first
-app.mount("/", mcp)
+# Get FastMCP's internal app and include its routes in our app
+mcp_app = mcp.app
+
+# Include all routes from the MCP app into our main app
+for route in mcp_app.routes:
+    app.routes.append(route)
 
 # Export for uvicorn
 if __name__ == "__main__":
