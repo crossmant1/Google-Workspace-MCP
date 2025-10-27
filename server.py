@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import os
 import requests
 import io
+import traceback
 
 load_dotenv()
 
@@ -14,8 +15,8 @@ CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 OWNER_EMAIL = os.getenv("OWNER_EMAIL", "owner@example.com")
 SCOPES = [
-    "https://www.googleapis.com/auth/drive",      # Full Drive access
-    "https://www.googleapis.com/auth/documents"    # Full Docs access
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/documents"
 ]
 
 # In-memory token storage for single user
@@ -63,7 +64,7 @@ async def list_drive_files(max_results: int = 20) -> dict:
             "files": files
         }
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 async def _read_file_content_helper(file_id: str) -> dict:
     """Helper function to read file content - used by multiple tools"""
@@ -177,7 +178,7 @@ async def _read_file_content_helper(file_id: str) -> dict:
         }
         
     except Exception as e:
-        return {"error": str(e), "file_id": file_id}
+        return {"error": str(e), "file_id": file_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
 async def search_drive_files(query: str, max_results: int = 10) -> dict:
@@ -219,7 +220,7 @@ async def search_drive_files(query: str, max_results: int = 10) -> dict:
             "files": files
         }
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
 @mcp.tool()
 async def read_file_by_name(file_name: str) -> dict:
@@ -283,7 +284,7 @@ async def read_file_by_name(file_name: str) -> dict:
         return result
         
     except Exception as e:
-        return {"error": str(e), "searched_for": file_name}
+        return {"error": str(e), "searched_for": file_name, "traceback": traceback.format_exc()}
 
 @mcp.tool()
 async def read_file_content(file_id: str) -> dict:
@@ -314,6 +315,13 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
     try:
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
+
+        print(f"\n=== UPDATE DOCUMENT DEBUG ===")
+        print(f"File ID: {file_id}")
+        print(f"Content length: {len(new_content)} chars")
+        print(f"Token present: {stored_token is not None}")
+        print(f"Scopes configured: {SCOPES}")
 
         creds = Credentials(
             token=stored_token.get("access_token"),
@@ -324,25 +332,55 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
             scopes=SCOPES,
         )
 
+        print(f"Credentials created, valid: {creds.valid}")
+        print(f"Token: {creds.token[:20]}..." if creds.token else "No token")
+        print(f"Scopes in creds: {creds.scopes}")
+
         # Get file metadata to check type
         drive_service = build("drive", "v3", credentials=creds)
+        print("Drive service built successfully")
+        
         file_metadata = drive_service.files().get(
             fileId=file_id,
-            fields="id,name,mimeType"
+            fields="id,name,mimeType,capabilities"
         ).execute()
+        
+        print(f"File metadata retrieved: {file_metadata.get('name')}")
+        print(f"MIME type: {file_metadata.get('mimeType')}")
+        print(f"Capabilities: {file_metadata.get('capabilities')}")
         
         mime_type = file_metadata.get("mimeType", "")
         
+        # Check if we can edit
+        capabilities = file_metadata.get("capabilities", {})
+        can_edit = capabilities.get("canEdit", False)
+        print(f"Can edit: {can_edit}")
+        
+        if not can_edit:
+            return {
+                "success": False,
+                "error": "You do not have edit permissions for this document",
+                "file_id": file_id,
+                "name": file_metadata["name"],
+                "capabilities": capabilities
+            }
+        
         # Handle Google Docs
         if mime_type == "application/vnd.google-apps.document":
+            print("Building Docs service...")
             docs_service = build("docs", "v1", credentials=creds)
+            print("Docs service built successfully")
             
             # Get the current document to find the end index
+            print("Fetching document structure...")
             doc = docs_service.documents().get(documentId=file_id).execute()
+            print(f"Document retrieved: {doc.get('title')}")
+            
             content_length = doc.get('body').get('content')[-1].get('endIndex') - 1
+            print(f"Current content length: {content_length}")
             
             # Delete all existing content and insert new content
-            requests = [
+            requests_payload = [
                 {
                     'deleteContentRange': {
                         'range': {
@@ -361,17 +399,24 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
                 }
             ]
             
-            docs_service.documents().batchUpdate(
+            print(f"Sending batchUpdate request...")
+            print(f"Request payload: {requests_payload}")
+            
+            result = docs_service.documents().batchUpdate(
                 documentId=file_id,
-                body={'requests': requests}
+                body={'requests': requests_payload}
             ).execute()
+            
+            print(f"BatchUpdate result: {result}")
+            print("=== UPDATE COMPLETE ===\n")
             
             return {
                 "success": True,
                 "file_id": file_id,
                 "name": file_metadata["name"],
                 "message": "Document updated successfully",
-                "content_length": len(new_content)
+                "content_length": len(new_content),
+                "api_response": result
             }
         else:
             return {
@@ -381,8 +426,26 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
                 "name": file_metadata["name"]
             }
         
+    except HttpError as e:
+        error_details = {
+            "error_type": "HttpError",
+            "status_code": e.resp.status,
+            "reason": e.resp.reason,
+            "error_details": e.error_details if hasattr(e, 'error_details') else str(e),
+            "file_id": file_id,
+            "traceback": traceback.format_exc()
+        }
+        print(f"HTTP Error occurred: {error_details}")
+        return error_details
     except Exception as e:
-        return {"error": str(e), "file_id": file_id}
+        error_details = {
+            "error_type": type(e).__name__,
+            "error": str(e),
+            "file_id": file_id,
+            "traceback": traceback.format_exc()
+        }
+        print(f"Exception occurred: {error_details}")
+        return error_details
 
 @mcp.tool()
 async def update_document_by_name(file_name: str, new_content: str) -> dict:
@@ -433,6 +496,8 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
         # Use the first matching file
         file_id = files[0]["id"]
         
+        print(f"Found file: {files[0]['name']} (ID: {file_id})")
+        
         # Build the result with match info
         result = {
             "searched_for": file_name,
@@ -443,56 +508,37 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
             result["note"] = f"Found {len(files)} matching documents, updating the first one: '{files[0]['name']}'"
             result["other_matches"] = [{"id": f["id"], "name": f["name"]} for f in files[1:]]
         
-        # Update the document
-        docs_service = build("docs", "v1", credentials=creds)
-        doc = docs_service.documents().get(documentId=file_id).execute()
-        content_length = doc.get('body').get('content')[-1].get('endIndex') - 1
-        
-        requests = [
-            {
-                'deleteContentRange': {
-                    'range': {
-                        'startIndex': 1,
-                        'endIndex': content_length
-                    }
-                }
-            },
-            {
-                'insertText': {
-                    'location': {
-                        'index': 1
-                    },
-                    'text': new_content
-                }
-            }
-        ]
-        
-        docs_service.documents().batchUpdate(
-            documentId=file_id,
-            body={'requests': requests}
-        ).execute()
-        
-        result.update({
-            "success": True,
-            "file_id": file_id,
-            "name": files[0]["name"],
-            "message": "Document updated successfully",
-            "content_length": len(new_content)
-        })
+        # Update the document using the main function
+        update_result = await update_document_content(file_id, new_content)
+        result.update(update_result)
         
         return result
         
     except Exception as e:
-        return {"error": str(e), "searched_for": file_name}
+        return {
+            "error": str(e), 
+            "searched_for": file_name,
+            "traceback": traceback.format_exc()
+        }
 
 @mcp.tool()
 async def get_auth_status() -> dict:
     """Check if the server is authenticated with Google Drive"""
-    return {
+    status = {
         "authenticated": stored_token is not None,
         "owner": OWNER_EMAIL if stored_token else None,
+        "scopes": SCOPES,
         "message": "Connected to Google Drive" if stored_token else "Not authenticated. Please visit /auth to connect."
     }
+    
+    if stored_token:
+        status["token_preview"] = {
+            "has_access_token": "access_token" in stored_token,
+            "has_refresh_token": "refresh_token" in stored_token,
+            "access_token_preview": stored_token.get("access_token", "")[:20] + "..." if stored_token.get("access_token") else None
+        }
+    
+    return status
 
 # Create the MCP ASGI app - this creates a Starlette app with the MCP endpoint at /mcp/
 mcp_asgi = mcp.http_app(path='/mcp')
@@ -536,13 +582,23 @@ async def oauth_callback(request):
         return StarletteJSONResponse({"error": f"Token exchange failed: {token_resp.text}"}, status_code=500)
 
     stored_token = token_resp.json()
-    return StarletteJSONResponse({"status": "connected", "owner": OWNER_EMAIL})
+    print(f"\n=== NEW TOKEN STORED ===")
+    print(f"Token keys: {stored_token.keys()}")
+    print(f"Scope in token: {stored_token.get('scope')}")
+    print("========================\n")
+    
+    return StarletteJSONResponse({
+        "status": "connected", 
+        "owner": OWNER_EMAIL,
+        "scopes_granted": stored_token.get('scope', '').split()
+    })
 
 async def health(request):
     return StarletteJSONResponse({
         "status": "ok", 
         "authenticated": stored_token is not None,
-        "owner": OWNER_EMAIL
+        "owner": OWNER_EMAIL,
+        "scopes_configured": SCOPES
     })
 
 async def root(request):
@@ -554,7 +610,8 @@ async def root(request):
             "health": "/health - Health check",
             "mcp": "/mcp/ - MCP protocol endpoint (POST only)"
         },
-        "authenticated": stored_token is not None
+        "authenticated": stored_token is not None,
+        "scopes": SCOPES
     })
 
 # Create the main app using Starlette and mount everything
