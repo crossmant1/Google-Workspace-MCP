@@ -25,6 +25,9 @@ stored_token = None
 # Create MCP instance
 mcp = FastMCP("Google Drive MCP")
 
+# Add dependencies for proper async handling
+import asyncio
+
 # --- MCP Tools ---
 @mcp.tool()
 async def list_drive_files(max_results: int = 20) -> dict:
@@ -508,9 +511,91 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
             result["note"] = f"Found {len(files)} matching documents, updating the first one: '{files[0]['name']}'"
             result["other_matches"] = [{"id": f["id"], "name": f["name"]} for f in files[1:]]
         
-        # Update the document using the main function
-        update_result = await update_document_content(file_id, new_content)
-        result.update(update_result)
+        # Update the document by directly implementing the logic here
+        # (Can't call another @mcp.tool() from within a tool)
+        from googleapiclient.errors import HttpError
+        
+        print(f"\n=== UPDATE DOCUMENT DEBUG (from update_by_name) ===")
+        print(f"File ID: {file_id}")
+        print(f"Content length: {len(new_content)} chars")
+        
+        # Get file metadata to check type and permissions
+        file_metadata = service.files().get(
+            fileId=file_id,
+            fields="id,name,mimeType,capabilities"
+        ).execute()
+        
+        print(f"File metadata retrieved: {file_metadata.get('name')}")
+        print(f"MIME type: {file_metadata.get('mimeType')}")
+        
+        mime_type = file_metadata.get("mimeType", "")
+        capabilities = file_metadata.get("capabilities", {})
+        can_edit = capabilities.get("canEdit", False)
+        
+        print(f"Can edit: {can_edit}")
+        
+        if not can_edit:
+            result.update({
+                "success": False,
+                "error": "You do not have edit permissions for this document",
+                "file_id": file_id,
+                "name": file_metadata["name"],
+                "capabilities": capabilities
+            })
+            return result
+        
+        if mime_type != "application/vnd.google-apps.document":
+            result.update({
+                "success": False,
+                "error": f"File type '{mime_type}' is not a Google Doc.",
+                "file_id": file_id,
+                "name": file_metadata["name"]
+            })
+            return result
+        
+        # Build Docs service and update
+        docs_service = build("docs", "v1", credentials=creds)
+        doc = docs_service.documents().get(documentId=file_id).execute()
+        content_length = doc.get('body').get('content')[-1].get('endIndex') - 1
+        
+        print(f"Current content length: {content_length}")
+        
+        requests_payload = [
+            {
+                'deleteContentRange': {
+                    'range': {
+                        'startIndex': 1,
+                        'endIndex': content_length
+                    }
+                }
+            },
+            {
+                'insertText': {
+                    'location': {
+                        'index': 1
+                    },
+                    'text': new_content
+                }
+            }
+        ]
+        
+        print(f"Sending batchUpdate request...")
+        api_result = docs_service.documents().batchUpdate(
+            documentId=file_id,
+            body={'requests': requests_payload}
+        ).execute()
+        
+        print(f"BatchUpdate successful!")
+        print("=== UPDATE COMPLETE ===\n")
+        
+        result.update({
+            "success": True,
+            "file_id": file_id,
+            "name": file_metadata["name"],
+            "message": "Document updated successfully",
+            "content_length": len(new_content),
+            "api_response": api_result
+        })
         
         return result
         
@@ -523,7 +608,7 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
 
 @mcp.tool()
 async def get_auth_status() -> dict:
-    """Check if the server is authenticated with Google Drive"""
+    """Check if the server is authenticated with Google Drive and get authenticated user info"""
     status = {
         "authenticated": stored_token is not None,
         "owner": OWNER_EMAIL if stored_token else None,
@@ -532,6 +617,30 @@ async def get_auth_status() -> dict:
     }
     
     if stored_token:
+        try:
+            from google.oauth2.credentials import Credentials
+            from googleapiclient.discovery import build
+            
+            creds = Credentials(
+                token=stored_token.get("access_token"),
+                refresh_token=stored_token.get("refresh_token"),
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=CLIENT_ID,
+                client_secret=CLIENT_SECRET,
+                scopes=SCOPES,
+            )
+            
+            # Get info about the authenticated user
+            drive_service = build("drive", "v3", credentials=creds)
+            about = drive_service.about().get(fields="user").execute()
+            
+            status["authenticated_user"] = {
+                "email": about.get("user", {}).get("emailAddress"),
+                "display_name": about.get("user", {}).get("displayName")
+            }
+        except Exception as e:
+            status["error_getting_user_info"] = str(e)
+        
         status["token_preview"] = {
             "has_access_token": "access_token" in stored_token,
             "has_refresh_token": "refresh_token" in stored_token,
