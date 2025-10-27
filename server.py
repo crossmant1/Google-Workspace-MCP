@@ -14,9 +14,8 @@ CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 OWNER_EMAIL = os.getenv("OWNER_EMAIL", "owner@example.com")
 SCOPES = [
-    "https://www.googleapis.com/auth/drive.metadata.readonly",
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/drive.file"
+    "https://www.googleapis.com/auth/drive",      # Full Drive access
+    "https://www.googleapis.com/auth/documents"    # Full Docs access
 ]
 
 # In-memory token storage for single user
