@@ -15,7 +15,8 @@ REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 OWNER_EMAIL = os.getenv("OWNER_EMAIL", "owner@example.com")
 SCOPES = [
     "https://www.googleapis.com/auth/drive.metadata.readonly",
-    "https://www.googleapis.com/auth/drive.readonly"
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file"
 ]
 
 # In-memory token storage for single user
@@ -296,6 +297,194 @@ async def read_file_content(file_id: str) -> dict:
         Dictionary containing file metadata and content (for text files) or download info (for binary files)
     """
     return await _read_file_content_helper(file_id)
+
+@mcp.tool()
+async def update_document_content(file_id: str, new_content: str) -> dict:
+    """Update the contents of a Google Docs document
+    
+    Args:
+        file_id: The Google Drive file ID of the document to update
+        new_content: The new text content to write to the document (replaces all existing content)
+    
+    Returns:
+        Dictionary with success status and updated file information
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=stored_token.get("access_token"),
+            refresh_token=stored_token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+
+        # Get file metadata to check type
+        drive_service = build("drive", "v3", credentials=creds)
+        file_metadata = drive_service.files().get(
+            fileId=file_id,
+            fields="id,name,mimeType"
+        ).execute()
+        
+        mime_type = file_metadata.get("mimeType", "")
+        
+        # Handle Google Docs
+        if mime_type == "application/vnd.google-apps.document":
+            docs_service = build("docs", "v1", credentials=creds)
+            
+            # Get the current document to find the end index
+            doc = docs_service.documents().get(documentId=file_id).execute()
+            content_length = doc.get('body').get('content')[-1].get('endIndex') - 1
+            
+            # Delete all existing content and insert new content
+            requests = [
+                {
+                    'deleteContentRange': {
+                        'range': {
+                            'startIndex': 1,
+                            'endIndex': content_length
+                        }
+                    }
+                },
+                {
+                    'insertText': {
+                        'location': {
+                            'index': 1
+                        },
+                        'text': new_content
+                    }
+                }
+            ]
+            
+            docs_service.documents().batchUpdate(
+                documentId=file_id,
+                body={'requests': requests}
+            ).execute()
+            
+            return {
+                "success": True,
+                "file_id": file_id,
+                "name": file_metadata["name"],
+                "message": "Document updated successfully",
+                "content_length": len(new_content)
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"File type '{mime_type}' is not a Google Doc. Only Google Docs can be edited with this tool.",
+                "file_id": file_id,
+                "name": file_metadata["name"]
+            }
+        
+    except Exception as e:
+        return {"error": str(e), "file_id": file_id}
+
+@mcp.tool()
+async def update_document_by_name(file_name: str, new_content: str) -> dict:
+    """Update the contents of a Google Docs document by searching for its name
+    
+    Args:
+        file_name: The name of the document to search for and update
+        new_content: The new text content to write to the document (replaces all existing content)
+    
+    Returns:
+        Dictionary with success status and updated file information
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=stored_token.get("access_token"),
+            refresh_token=stored_token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+
+        service = build("drive", "v3", credentials=creds)
+        safe_query = file_name.replace("'", "\\'")
+        
+        # Search for Google Docs with matching name
+        res = service.files().list(
+            q=f"name contains '{safe_query}' and mimeType='application/vnd.google-apps.document'",
+            pageSize=10,
+            fields="files(id,name,mimeType)"
+        ).execute()
+        
+        files = res.get("files", [])
+        
+        if not files:
+            return {
+                "success": False,
+                "error": f"No Google Docs found matching '{file_name}'",
+                "searched_for": file_name
+            }
+        
+        # Use the first matching file
+        file_id = files[0]["id"]
+        
+        # Build the result with match info
+        result = {
+            "searched_for": file_name,
+            "matched_file": files[0]["name"]
+        }
+        
+        if len(files) > 1:
+            result["note"] = f"Found {len(files)} matching documents, updating the first one: '{files[0]['name']}'"
+            result["other_matches"] = [{"id": f["id"], "name": f["name"]} for f in files[1:]]
+        
+        # Update the document
+        docs_service = build("docs", "v1", credentials=creds)
+        doc = docs_service.documents().get(documentId=file_id).execute()
+        content_length = doc.get('body').get('content')[-1].get('endIndex') - 1
+        
+        requests = [
+            {
+                'deleteContentRange': {
+                    'range': {
+                        'startIndex': 1,
+                        'endIndex': content_length
+                    }
+                }
+            },
+            {
+                'insertText': {
+                    'location': {
+                        'index': 1
+                    },
+                    'text': new_content
+                }
+            }
+        ]
+        
+        docs_service.documents().batchUpdate(
+            documentId=file_id,
+            body={'requests': requests}
+        ).execute()
+        
+        result.update({
+            "success": True,
+            "file_id": file_id,
+            "name": files[0]["name"],
+            "message": "Document updated successfully",
+            "content_length": len(new_content)
+        })
+        
+        return result
+        
+    except Exception as e:
+        return {"error": str(e), "searched_for": file_name}
 
 @mcp.tool()
 async def get_auth_status() -> dict:
