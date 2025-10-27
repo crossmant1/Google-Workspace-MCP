@@ -65,122 +65,8 @@ async def list_drive_files(max_results: int = 20) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-@mcp.tool()
-async def search_drive_files(query: str, max_results: int = 10) -> dict:
-    """Search for files in Google Drive by name
-    
-    Args:
-        query: Search query (file name to search for)
-        max_results: Maximum number of results to return (default: 10)
-    """
-    if not stored_token:
-        return {"error": "No Google account connected. Please authenticate first at /auth"}
-
-    try:
-        from google.oauth2.credentials import Credentials
-        from googleapiclient.discovery import build
-
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
-        service = build("drive", "v3", credentials=creds)
-        safe_query = query.replace("'", "\\'")
-        res = service.files().list(
-            q=f"name contains '{safe_query}'",
-            pageSize=min(max_results, 100),
-            fields="files(id,name,mimeType,modifiedTime,size)"
-        ).execute()
-        
-        files = res.get("files", [])
-        return {
-            "success": True,
-            "query": query,
-            "count": len(files),
-            "files": files
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-@mcp.tool()
-async def read_file_by_name(file_name: str) -> dict:
-    """Read the contents of a file from Google Drive by searching for its name
-    
-    Args:
-        file_name: The name of the file to search for and read
-    
-    Returns:
-        Dictionary containing file metadata and content. If multiple files match, reads the first one.
-    """
-    if not stored_token:
-        return {"error": "No Google account connected. Please authenticate first at /auth"}
-
-    try:
-        from google.oauth2.credentials import Credentials
-        from googleapiclient.discovery import build
-
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
-        service = build("drive", "v3", credentials=creds)
-        safe_query = file_name.replace("'", "\\'")
-        
-        # Search for the file
-        res = service.files().list(
-            q=f"name contains '{safe_query}'",
-            pageSize=10,
-            fields="files(id,name,mimeType)"
-        ).execute()
-        
-        files = res.get("files", [])
-        
-        if not files:
-            return {
-                "success": False,
-                "error": f"No files found matching '{file_name}'",
-                "searched_for": file_name
-            }
-        
-        # Use the first matching file
-        file_id = files[0]["id"]
-        
-        if len(files) > 1:
-            match_info = {
-                "note": f"Found {len(files)} matching files, reading the first one: '{files[0]['name']}'",
-                "other_matches": [{"id": f["id"], "name": f["name"]} for f in files[1:]]
-            }
-        else:
-            match_info = {}
-        
-        # Now read the file content using the file_id
-        result = await read_file_content(file_id)
-        result.update(match_info)
-        return result
-        
-    except Exception as e:
-        return {"error": str(e), "searched_for": file_name}
-
-@mcp.tool()
-async def read_file_content(file_id: str) -> dict:
-    """Read the contents of a specific file from Google Drive using its file ID
-    
-    Args:
-        file_id: The Google Drive file ID (not the file name) to read
-    
-    Returns:
-        Dictionary containing file metadata and content (for text files) or download info (for binary files)
-    """
+async def _read_file_content_helper(file_id: str) -> dict:
+    """Helper function to read file content - used by multiple tools"""
     if not stored_token:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
@@ -292,6 +178,124 @@ async def read_file_content(file_id: str) -> dict:
         
     except Exception as e:
         return {"error": str(e), "file_id": file_id}
+
+@mcp.tool()
+async def search_drive_files(query: str, max_results: int = 10) -> dict:
+    """Search for files in Google Drive by name
+    
+    Args:
+        query: Search query (file name to search for)
+        max_results: Maximum number of results to return (default: 10)
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=stored_token.get("access_token"),
+            refresh_token=stored_token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+
+        service = build("drive", "v3", credentials=creds)
+        safe_query = query.replace("'", "\\'")
+        res = service.files().list(
+            q=f"name contains '{safe_query}'",
+            pageSize=min(max_results, 100),
+            fields="files(id,name,mimeType,modifiedTime,size)"
+        ).execute()
+        
+        files = res.get("files", [])
+        return {
+            "success": True,
+            "query": query,
+            "count": len(files),
+            "files": files
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@mcp.tool()
+async def read_file_by_name(file_name: str) -> dict:
+    """Read the contents of a file from Google Drive by searching for its name
+    
+    Args:
+        file_name: The name of the file to search for and read
+    
+    Returns:
+        Dictionary containing file metadata and content. If multiple files match, reads the first one.
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=stored_token.get("access_token"),
+            refresh_token=stored_token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+
+        service = build("drive", "v3", credentials=creds)
+        safe_query = file_name.replace("'", "\\'")
+        
+        # Search for the file
+        res = service.files().list(
+            q=f"name contains '{safe_query}'",
+            pageSize=10,
+            fields="files(id,name,mimeType)"
+        ).execute()
+        
+        files = res.get("files", [])
+        
+        if not files:
+            return {
+                "success": False,
+                "error": f"No files found matching '{file_name}'",
+                "searched_for": file_name
+            }
+        
+        # Use the first matching file
+        file_id = files[0]["id"]
+        
+        if len(files) > 1:
+            match_info = {
+                "note": f"Found {len(files)} matching files, reading the first one: '{files[0]['name']}'",
+                "other_matches": [{"id": f["id"], "name": f["name"]} for f in files[1:]]
+            }
+        else:
+            match_info = {}
+        
+        # Now read the file content using the helper function
+        result = await _read_file_content_helper(file_id)
+        result.update(match_info)
+        return result
+        
+    except Exception as e:
+        return {"error": str(e), "searched_for": file_name}
+
+@mcp.tool()
+async def read_file_content(file_id: str) -> dict:
+    """Read the contents of a specific file from Google Drive using its file ID
+    
+    Args:
+        file_id: The Google Drive file ID (not the file name) to read
+    
+    Returns:
+        Dictionary containing file metadata and content (for text files) or download info (for binary files)
+    """
+    return await _read_file_content_helper(file_id)
 
 @mcp.tool()
 async def get_auth_status() -> dict:
