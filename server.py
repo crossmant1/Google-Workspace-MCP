@@ -4,6 +4,7 @@ from fastmcp import FastMCP
 from dotenv import load_dotenv
 import os
 import requests
+import io
 
 load_dotenv()
 
@@ -12,7 +13,10 @@ CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 OWNER_EMAIL = os.getenv("OWNER_EMAIL", "owner@example.com")
-SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.metadata.readonly",
+    "https://www.googleapis.com/auth/drive.readonly"
+]
 
 # In-memory token storage for single user
 stored_token = None
@@ -102,6 +106,128 @@ async def search_drive_files(query: str, max_results: int = 10) -> dict:
         }
     except Exception as e:
         return {"error": str(e)}
+
+@mcp.tool()
+async def read_file_content(file_id: str) -> dict:
+    """Read the contents of a specific file from Google Drive
+    
+    Args:
+        file_id: The Google Drive file ID to read
+    
+    Returns:
+        Dictionary containing file metadata and content (for text files) or download info (for binary files)
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseDownload
+
+        creds = Credentials(
+            token=stored_token.get("access_token"),
+            refresh_token=stored_token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+
+        service = build("drive", "v3", credentials=creds)
+        
+        # Get file metadata
+        file_metadata = service.files().get(
+            fileId=file_id,
+            fields="id,name,mimeType,size,modifiedTime,webViewLink"
+        ).execute()
+        
+        mime_type = file_metadata.get("mimeType", "")
+        
+        # Handle Google Workspace files (Docs, Sheets, Slides)
+        if mime_type.startswith("application/vnd.google-apps"):
+            export_formats = {
+                "application/vnd.google-apps.document": "text/plain",
+                "application/vnd.google-apps.spreadsheet": "text/csv",
+                "application/vnd.google-apps.presentation": "text/plain",
+            }
+            
+            if mime_type in export_formats:
+                request = service.files().export_media(
+                    fileId=file_id,
+                    mimeType=export_formats[mime_type]
+                )
+                fh = io.BytesIO()
+                downloader = MediaIoBaseDownload(fh, request)
+                
+                done = False
+                while not done:
+                    status, done = downloader.next_chunk()
+                
+                content = fh.getvalue().decode("utf-8", errors="replace")
+                return {
+                    "success": True,
+                    "file_id": file_id,
+                    "name": file_metadata["name"],
+                    "mimeType": mime_type,
+                    "exported_as": export_formats[mime_type],
+                    "size": len(content),
+                    "content": content
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Google Workspace file type '{mime_type}' cannot be exported as text",
+                    "file_id": file_id,
+                    "name": file_metadata["name"],
+                    "webViewLink": file_metadata.get("webViewLink")
+                }
+        
+        # Handle regular files
+        request = service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+        
+        content_bytes = fh.getvalue()
+        
+        # Try to decode as text for common text formats
+        text_mime_types = [
+            "text/", "application/json", "application/xml",
+            "application/javascript", "application/x-python"
+        ]
+        
+        if any(mime_type.startswith(t) for t in text_mime_types):
+            try:
+                content = content_bytes.decode("utf-8")
+                return {
+                    "success": True,
+                    "file_id": file_id,
+                    "name": file_metadata["name"],
+                    "mimeType": mime_type,
+                    "size": len(content_bytes),
+                    "content": content
+                }
+            except UnicodeDecodeError:
+                pass
+        
+        # For binary files, return metadata only
+        return {
+            "success": True,
+            "file_id": file_id,
+            "name": file_metadata["name"],
+            "mimeType": mime_type,
+            "size": file_metadata.get("size"),
+            "content": None,
+            "message": "Binary file - content not displayed. Use webViewLink to access.",
+            "webViewLink": file_metadata.get("webViewLink")
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "file_id": file_id}
 
 @mcp.tool()
 async def get_auth_status() -> dict:
