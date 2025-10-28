@@ -6,6 +6,7 @@ import os
 import requests
 import io
 import traceback
+import asyncio
 
 load_dotenv()
 
