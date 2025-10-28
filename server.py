@@ -7,6 +7,8 @@ import requests
 import io
 import traceback
 import asyncio
+from typing import Dict, Optional
+import secrets
 
 load_dotenv()
 
@@ -14,31 +16,46 @@ load_dotenv()
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
-OWNER_EMAIL = os.getenv("OWNER_EMAIL", "owner@example.com")
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/documents"
 ]
 
-# In-memory token storage for single user
-stored_token = None
+# Multi-user token storage: {user_id: {token_data, email}}
+user_tokens: Dict[str, dict] = {}
+
+# Session management: {session_token: user_id}
+sessions: Dict[str, str] = {}
 
 # Create MCP instance
 mcp = FastMCP("Google Drive MCP")
 
-# Add dependencies for proper async handling
-import asyncio
+def get_user_token(user_id: str) -> Optional[dict]:
+    """Get token for a specific user"""
+    user_data = user_tokens.get(user_id)
+    if user_data:
+        return user_data.get("token")
+    return None
+
+def get_user_from_session(session_token: str) -> Optional[str]:
+    """Get user_id from session token"""
+    return sessions.get(session_token)
 
 # --- MCP Tools ---
 @mcp.tool()
-async def list_drive_files(max_results: int = 20) -> dict:
+async def list_drive_files(user_id: str, max_results: int = 20) -> dict:
     """List files from Google Drive
     
     Args:
+        user_id: The user identifier (session token or user ID)
         max_results: Maximum number of files to return (default: 20, max: 100)
     """
+    # Try as session token first, then as user_id
+    actual_user_id = get_user_from_session(user_id) or user_id
+    stored_token = get_user_token(actual_user_id)
+    
     if not stored_token:
-        return {"error": "No Google account connected. Please authenticate first at /auth"}
+        return {"error": f"User {user_id} not authenticated. Please authenticate first at /auth?user_id={user_id}"}
 
     try:
         from google.oauth2.credentials import Credentials
@@ -64,16 +81,20 @@ async def list_drive_files(max_results: int = 20) -> dict:
         files = res.get("files", [])
         return {
             "success": True,
+            "user_id": actual_user_id,
             "count": len(files),
             "files": files
         }
     except Exception as e:
-        return {"error": str(e), "traceback": traceback.format_exc()}
+        return {"error": str(e), "user_id": actual_user_id, "traceback": traceback.format_exc()}
 
-async def _read_file_content_helper(file_id: str) -> dict:
+async def _read_file_content_helper(user_id: str, file_id: str) -> dict:
     """Helper function to read file content - used by multiple tools"""
+    actual_user_id = get_user_from_session(user_id) or user_id
+    stored_token = get_user_token(actual_user_id)
+    
     if not stored_token:
-        return {"error": "No Google account connected. Please authenticate first at /auth"}
+        return {"error": f"User {user_id} not authenticated. Please authenticate first at /auth?user_id={user_id}"}
 
     try:
         from google.oauth2.credentials import Credentials
@@ -122,6 +143,7 @@ async def _read_file_content_helper(file_id: str) -> dict:
                 content = fh.getvalue().decode("utf-8", errors="replace")
                 return {
                     "success": True,
+                    "user_id": actual_user_id,
                     "file_id": file_id,
                     "name": file_metadata["name"],
                     "mimeType": mime_type,
@@ -133,6 +155,7 @@ async def _read_file_content_helper(file_id: str) -> dict:
                 return {
                     "success": False,
                     "error": f"Google Workspace file type '{mime_type}' cannot be exported as text",
+                    "user_id": actual_user_id,
                     "file_id": file_id,
                     "name": file_metadata["name"],
                     "webViewLink": file_metadata.get("webViewLink")
@@ -160,6 +183,7 @@ async def _read_file_content_helper(file_id: str) -> dict:
                 content = content_bytes.decode("utf-8")
                 return {
                     "success": True,
+                    "user_id": actual_user_id,
                     "file_id": file_id,
                     "name": file_metadata["name"],
                     "mimeType": mime_type,
@@ -172,6 +196,7 @@ async def _read_file_content_helper(file_id: str) -> dict:
         # For binary files, return metadata only
         return {
             "success": True,
+            "user_id": actual_user_id,
             "file_id": file_id,
             "name": file_metadata["name"],
             "mimeType": mime_type,
@@ -182,18 +207,22 @@ async def _read_file_content_helper(file_id: str) -> dict:
         }
         
     except Exception as e:
-        return {"error": str(e), "file_id": file_id, "traceback": traceback.format_exc()}
+        return {"error": str(e), "user_id": actual_user_id, "file_id": file_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def search_drive_files(query: str, max_results: int = 10) -> dict:
+async def search_drive_files(user_id: str, query: str, max_results: int = 10) -> dict:
     """Search for files in Google Drive by name
     
     Args:
+        user_id: The user identifier (session token or user ID)
         query: Search query (file name to search for)
         max_results: Maximum number of results to return (default: 10)
     """
+    actual_user_id = get_user_from_session(user_id) or user_id
+    stored_token = get_user_token(actual_user_id)
+    
     if not stored_token:
-        return {"error": "No Google account connected. Please authenticate first at /auth"}
+        return {"error": f"User {user_id} not authenticated. Please authenticate first at /auth?user_id={user_id}"}
 
     try:
         from google.oauth2.credentials import Credentials
@@ -219,25 +248,30 @@ async def search_drive_files(query: str, max_results: int = 10) -> dict:
         files = res.get("files", [])
         return {
             "success": True,
+            "user_id": actual_user_id,
             "query": query,
             "count": len(files),
             "files": files
         }
     except Exception as e:
-        return {"error": str(e), "traceback": traceback.format_exc()}
+        return {"error": str(e), "user_id": actual_user_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def read_file_by_name(file_name: str) -> dict:
+async def read_file_by_name(user_id: str, file_name: str) -> dict:
     """Read the contents of a file from Google Drive by searching for its name
     
     Args:
+        user_id: The user identifier (session token or user ID)
         file_name: The name of the file to search for and read
     
     Returns:
         Dictionary containing file metadata and content. If multiple files match, reads the first one.
     """
+    actual_user_id = get_user_from_session(user_id) or user_id
+    stored_token = get_user_token(actual_user_id)
+    
     if not stored_token:
-        return {"error": "No Google account connected. Please authenticate first at /auth"}
+        return {"error": f"User {user_id} not authenticated. Please authenticate first at /auth?user_id={user_id}"}
 
     try:
         from google.oauth2.credentials import Credentials
@@ -268,6 +302,7 @@ async def read_file_by_name(file_name: str) -> dict:
             return {
                 "success": False,
                 "error": f"No files found matching '{file_name}'",
+                "user_id": actual_user_id,
                 "searched_for": file_name
             }
         
@@ -283,38 +318,43 @@ async def read_file_by_name(file_name: str) -> dict:
             match_info = {}
         
         # Now read the file content using the helper function
-        result = await _read_file_content_helper(file_id)
+        result = await _read_file_content_helper(user_id, file_id)
         result.update(match_info)
         return result
         
     except Exception as e:
-        return {"error": str(e), "searched_for": file_name, "traceback": traceback.format_exc()}
+        return {"error": str(e), "user_id": actual_user_id, "searched_for": file_name, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def read_file_content(file_id: str) -> dict:
+async def read_file_content(user_id: str, file_id: str) -> dict:
     """Read the contents of a specific file from Google Drive using its file ID
     
     Args:
+        user_id: The user identifier (session token or user ID)
         file_id: The Google Drive file ID (not the file name) to read
     
     Returns:
         Dictionary containing file metadata and content (for text files) or download info (for binary files)
     """
-    return await _read_file_content_helper(file_id)
+    return await _read_file_content_helper(user_id, file_id)
 
 @mcp.tool()
-async def update_document_content(file_id: str, new_content: str) -> dict:
+async def update_document_content(user_id: str, file_id: str, new_content: str) -> dict:
     """Update the contents of a Google Docs document
     
     Args:
+        user_id: The user identifier (session token or user ID)
         file_id: The Google Drive file ID of the document to update
         new_content: The new text content to write to the document (replaces all existing content)
     
     Returns:
         Dictionary with success status and updated file information
     """
+    actual_user_id = get_user_from_session(user_id) or user_id
+    stored_token = get_user_token(actual_user_id)
+    
     if not stored_token:
-        return {"error": "No Google account connected. Please authenticate first at /auth"}
+        return {"error": f"User {user_id} not authenticated. Please authenticate first at /auth?user_id={user_id}"}
 
     try:
         from google.oauth2.credentials import Credentials
@@ -322,6 +362,7 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
         from googleapiclient.errors import HttpError
 
         print(f"\n=== UPDATE DOCUMENT DEBUG ===")
+        print(f"User ID: {actual_user_id}")
         print(f"File ID: {file_id}")
         print(f"Content length: {len(new_content)} chars")
         print(f"Token present: {stored_token is not None}")
@@ -338,7 +379,6 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
 
         print(f"Credentials created, valid: {creds.valid}")
         print(f"Token: {creds.token[:20]}..." if creds.token else "No token")
-        print(f"Scopes in creds: {creds.scopes}")
 
         # Get file metadata to check type
         drive_service = build("drive", "v3", credentials=creds)
@@ -364,6 +404,7 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
             return {
                 "success": False,
                 "error": "You do not have edit permissions for this document",
+                "user_id": actual_user_id,
                 "file_id": file_id,
                 "name": file_metadata["name"],
                 "capabilities": capabilities
@@ -404,7 +445,6 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
             ]
             
             print(f"Sending batchUpdate request...")
-            print(f"Request payload: {requests_payload}")
             
             result = docs_service.documents().batchUpdate(
                 documentId=file_id,
@@ -416,6 +456,7 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
             
             return {
                 "success": True,
+                "user_id": actual_user_id,
                 "file_id": file_id,
                 "name": file_metadata["name"],
                 "message": "Document updated successfully",
@@ -426,6 +467,7 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
             return {
                 "success": False,
                 "error": f"File type '{mime_type}' is not a Google Doc. Only Google Docs can be edited with this tool.",
+                "user_id": actual_user_id,
                 "file_id": file_id,
                 "name": file_metadata["name"]
             }
@@ -436,6 +478,7 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
             "status_code": e.resp.status,
             "reason": e.resp.reason,
             "error_details": e.error_details if hasattr(e, 'error_details') else str(e),
+            "user_id": actual_user_id,
             "file_id": file_id,
             "traceback": traceback.format_exc()
         }
@@ -445,6 +488,7 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
         error_details = {
             "error_type": type(e).__name__,
             "error": str(e),
+            "user_id": actual_user_id,
             "file_id": file_id,
             "traceback": traceback.format_exc()
         }
@@ -452,22 +496,27 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
         return error_details
 
 @mcp.tool()
-async def update_document_by_name(file_name: str, new_content: str) -> dict:
+async def update_document_by_name(user_id: str, file_name: str, new_content: str) -> dict:
     """Update the contents of a Google Docs document by searching for its name
     
     Args:
+        user_id: The user identifier (session token or user ID)
         file_name: The name of the document to search for and update
         new_content: The new text content to write to the document (replaces all existing content)
     
     Returns:
         Dictionary with success status and updated file information
     """
+    actual_user_id = get_user_from_session(user_id) or user_id
+    stored_token = get_user_token(actual_user_id)
+    
     if not stored_token:
-        return {"error": "No Google account connected. Please authenticate first at /auth"}
+        return {"error": f"User {user_id} not authenticated. Please authenticate first at /auth?user_id={user_id}"}
 
     try:
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
 
         creds = Credentials(
             token=stored_token.get("access_token"),
@@ -494,6 +543,7 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
             return {
                 "success": False,
                 "error": f"No Google Docs found matching '{file_name}'",
+                "user_id": actual_user_id,
                 "searched_for": file_name
             }
         
@@ -504,6 +554,7 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
         
         # Build the result with match info
         result = {
+            "user_id": actual_user_id,
             "searched_for": file_name,
             "matched_file": files[0]["name"]
         }
@@ -514,8 +565,6 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
         
         # Update the document by directly implementing the logic here
         # (Can't call another @mcp.tool() from within a tool)
-        from googleapiclient.errors import HttpError
-        
         print(f"\n=== UPDATE DOCUMENT DEBUG (from update_by_name) ===")
         print(f"File ID: {file_id}")
         print(f"Content length: {len(new_content)} chars")
@@ -602,26 +651,38 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
         
     except Exception as e:
         return {
-            "error": str(e), 
+            "error": str(e),
+            "user_id": actual_user_id,
             "searched_for": file_name,
             "traceback": traceback.format_exc()
         }
 
 @mcp.tool()
-async def get_auth_status() -> dict:
-    """Check if the server is authenticated with Google Drive and get authenticated user info"""
+async def get_auth_status(user_id: str) -> dict:
+    """Check if a user is authenticated with Google Drive and get their info
+    
+    Args:
+        user_id: The user identifier (session token or user ID)
+    """
+    actual_user_id = get_user_from_session(user_id) or user_id
+    user_data = user_tokens.get(actual_user_id)
+    
     status = {
-        "authenticated": stored_token is not None,
-        "owner": OWNER_EMAIL if stored_token else None,
+        "authenticated": user_data is not None,
+        "user_id": actual_user_id,
         "scopes": SCOPES,
-        "message": "Connected to Google Drive" if stored_token else "Not authenticated. Please visit /auth to connect."
+        "message": "Connected to Google Drive" if user_data else f"Not authenticated. Please visit /auth?user_id={user_id} to connect."
     }
     
-    if stored_token:
+    if user_data:
+        status["email"] = user_data.get("email")
+        status["display_name"] = user_data.get("display_name")
+        
         try:
             from google.oauth2.credentials import Credentials
             from googleapiclient.discovery import build
             
+            stored_token = user_data.get("token")
             creds = Credentials(
                 token=stored_token.get("access_token"),
                 refresh_token=stored_token.get("refresh_token"),
@@ -641,14 +702,25 @@ async def get_auth_status() -> dict:
             }
         except Exception as e:
             status["error_getting_user_info"] = str(e)
-        
-        status["token_preview"] = {
-            "has_access_token": "access_token" in stored_token,
-            "has_refresh_token": "refresh_token" in stored_token,
-            "access_token_preview": stored_token.get("access_token", "")[:20] + "..." if stored_token.get("access_token") else None
-        }
     
     return status
+
+@mcp.tool()
+async def list_authenticated_users() -> dict:
+    """List all authenticated users (admin function)"""
+    users = []
+    for user_id, data in user_tokens.items():
+        users.append({
+            "user_id": user_id,
+            "email": data.get("email"),
+            "display_name": data.get("display_name")
+        })
+    
+    return {
+        "success": True,
+        "total_users": len(users),
+        "users": users
+    }
 
 # Create the MCP ASGI app - this creates a Starlette app with the MCP endpoint at /mcp/
 mcp_asgi = mcp.http_app(path='/mcp')
@@ -656,13 +728,19 @@ mcp_asgi = mcp.http_app(path='/mcp')
 # Create a Starlette app to combine everything
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route
-from starlette.responses import JSONResponse as StarletteJSONResponse
+from starlette.responses import JSONResponse as StarletteJSONResponse, RedirectResponse
 
 # Define OAuth routes
 async def start_auth(request):
     if not CLIENT_ID or not CLIENT_SECRET or not REDIRECT_URI:
         return StarletteJSONResponse({"error": "OAuth environment variables missing"}, status_code=500)
 
+    # Get or create user_id
+    user_id = request.query_params.get("user_id")
+    if not user_id:
+        user_id = secrets.token_urlsafe(16)
+    
+    # Store user_id in state parameter for OAuth callback
     from urllib.parse import urlencode
     params = urlencode({
         "client_id": CLIENT_ID,
@@ -671,14 +749,27 @@ async def start_auth(request):
         "scope": " ".join(SCOPES),
         "access_type": "offline",
         "prompt": "consent",
+        "state": user_id,  # Pass user_id through OAuth flow
     })
-    return StarletteJSONResponse({"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{params}"})
+    
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
+    return StarletteJSONResponse({
+        "auth_url": auth_url,
+        "user_id": user_id,
+        "message": "Visit the auth_url to authenticate. Save your user_id to access your files."
+    })
 
 async def oauth_callback(request):
-    global stored_token
+    global user_tokens, sessions
+    
     code = request.query_params.get("code")
+    state = request.query_params.get("state")  # This is our user_id
+    
     if not code:
         return StarletteJSONResponse({"error": "Missing code"}, status_code=400)
+    
+    if not state:
+        return StarletteJSONResponse({"error": "Missing state (user_id)"}, status_code=400)
 
     token_resp = requests.post("https://oauth2.googleapis.com/token", data={
         "code": code,
@@ -691,37 +782,113 @@ async def oauth_callback(request):
     if token_resp.status_code != 200:
         return StarletteJSONResponse({"error": f"Token exchange failed: {token_resp.text}"}, status_code=500)
 
-    stored_token = token_resp.json()
-    print(f"\n=== NEW TOKEN STORED ===")
-    print(f"Token keys: {stored_token.keys()}")
-    print(f"Scope in token: {stored_token.get('scope')}")
-    print("========================\n")
+    token_data = token_resp.json()
+    
+    # Get user info
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+        
+        creds = Credentials(
+            token=token_data.get("access_token"),
+            refresh_token=token_data.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+        
+        drive_service = build("drive", "v3", credentials=creds)
+        about = drive_service.about().get(fields="user").execute()
+        user_email = about.get("user", {}).get("emailAddress")
+        display_name = about.get("user", {}).get("displayName")
+        
+    except Exception as e:
+        user_email = "unknown@example.com"
+        display_name = "Unknown User"
+        print(f"Error getting user info: {e}")
+    
+    # Store token with user info
+    user_id = state  # user_id from state parameter
+    user_tokens[user_id] = {
+        "token": token_data,
+        "email": user_email,
+        "display_name": display_name
+    }
+    
+    # Create a session token for easier access
+    session_token = secrets.token_urlsafe(32)
+    sessions[session_token] = user_id
+    
+    print(f"\n=== NEW USER AUTHENTICATED ===")
+    print(f"User ID: {user_id}")
+    print(f"Email: {user_email}")
+    print(f"Session Token: {session_token}")
+    print(f"Scope in token: {token_data.get('scope')}")
+    print("===============================\n")
     
     return StarletteJSONResponse({
-        "status": "connected", 
-        "owner": OWNER_EMAIL,
-        "scopes_granted": stored_token.get('scope', '').split()
+        "status": "connected",
+        "user_id": user_id,
+        "session_token": session_token,
+        "email": user_email,
+        "display_name": display_name,
+        "scopes_granted": token_data.get('scope', '').split(),
+        "message": "Save your user_id or session_token to access your Google Drive files"
     })
+
+async def logout(request):
+    """Logout a user by removing their token"""
+    user_id = request.query_params.get("user_id")
+    
+    if not user_id:
+        return StarletteJSONResponse({"error": "user_id parameter required"}, status_code=400)
+    
+    # Try to find and remove user
+    actual_user_id = get_user_from_session(user_id) or user_id
+    
+    if actual_user_id in user_tokens:
+        user_data = user_tokens.pop(actual_user_id)
+        # Remove associated sessions
+        sessions_to_remove = [s for s, uid in sessions.items() if uid == actual_user_id]
+        for s in sessions_to_remove:
+            sessions.pop(s, None)
+        
+        return StarletteJSONResponse({
+            "status": "logged_out",
+            "user_id": actual_user_id,
+            "email": user_data.get("email")
+        })
+    else:
+        return StarletteJSONResponse({
+            "error": "User not found or not authenticated",
+            "user_id": user_id
+        }, status_code=404)
 
 async def health(request):
     return StarletteJSONResponse({
-        "status": "ok", 
-        "authenticated": stored_token is not None,
-        "owner": OWNER_EMAIL,
+        "status": "ok",
+        "total_authenticated_users": len(user_tokens),
         "scopes_configured": SCOPES
     })
 
 async def root(request):
     return StarletteJSONResponse({
-        "service": "Google Drive MCP Server",
+        "service": "Google Drive MCP Server (Multi-User)",
         "endpoints": {
-            "auth": "/auth - Start OAuth flow",
-            "callback": "/oauth2callback - OAuth callback",
+            "auth": "/auth?user_id=<optional> - Start OAuth flow (generates user_id if not provided)",
+            "callback": "/oauth2callback - OAuth callback (automatic)",
+            "logout": "/logout?user_id=<required> - Logout a user",
             "health": "/health - Health check",
             "mcp": "/mcp/ - MCP protocol endpoint (POST only)"
         },
-        "authenticated": stored_token is not None,
-        "scopes": SCOPES
+        "authenticated_users": len(user_tokens),
+        "usage": {
+            "step_1": "Visit /auth to get a user_id and auth_url",
+            "step_2": "Visit the auth_url in a browser to authenticate",
+            "step_3": "You'll be redirected back with your user_id and session_token",
+            "step_4": "Use your user_id or session_token in all MCP tool calls"
+        }
     })
 
 # Create the main app using Starlette and mount everything
@@ -730,6 +897,7 @@ app = Starlette(
         Route("/", root),
         Route("/auth", start_auth),
         Route("/oauth2callback", oauth_callback),
+        Route("/logout", logout),
         Route("/health", health),
         Mount("/", mcp_asgi),  # Mount MCP at root - it will handle /mcp/ path
     ],
