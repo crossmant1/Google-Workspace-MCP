@@ -10,7 +10,7 @@ import asyncio
 from typing import Dict, Optional
 import secrets
 from datetime import datetime, timedelta
-import pyodbc
+import pymssql
 from cryptography.fernet import Fernet
 import hashlib
 import json
@@ -45,18 +45,20 @@ SCOPES = [
 
 # Database connection string
 def get_db_connection():
-    """Create a connection to Azure SQL Database"""
-    connection_string = (
-        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
-        f"SERVER={AZURE_SQL_SERVER};"
-        f"DATABASE={AZURE_SQL_DATABASE};"
-        f"UID={AZURE_SQL_USERNAME};"
-        f"PWD={AZURE_SQL_PASSWORD};"
-        f"Encrypt=yes;"
-        f"TrustServerCertificate=no;"
-        f"Connection Timeout=30;"
+    """Create a connection to Azure SQL Database using pymssql"""
+    # Extract server name without port (pymssql adds port separately)
+    server = AZURE_SQL_SERVER.replace('.database.windows.net', '')
+    
+    return pymssql.connect(
+        server=server + '.database.windows.net',
+        user=AZURE_SQL_USERNAME,
+        password=AZURE_SQL_PASSWORD,
+        database=AZURE_SQL_DATABASE,
+        port=1433,
+        timeout=30,
+        login_timeout=30,
+        as_dict=False
     )
-    return pyodbc.connect(connection_string)
 
 # Database helper functions
 def encrypt_token(token_data: dict) -> str:
@@ -86,7 +88,7 @@ def create_user(email: str, display_name: str) -> str:
     
     cursor.execute("""
         INSERT INTO users (user_id, email, display_name, api_key_hash, created_at, last_login, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
     """, (user_id, email, display_name, api_key_hash, datetime.utcnow(), datetime.utcnow(), 1))
     
     conn.commit()
@@ -99,7 +101,7 @@ def get_user_by_email(email: str) -> Optional[dict]:
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT user_id, email, display_name, is_active FROM users WHERE email = ?", (email,))
+    cursor.execute("SELECT user_id, email, display_name, is_active FROM users WHERE email = %s", (email,))
     row = cursor.fetchone()
     conn.close()
     
@@ -119,7 +121,7 @@ def get_user_by_api_key(api_key: str) -> Optional[str]:
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT user_id FROM users WHERE api_key_hash = ? AND is_active = 1", (api_key_hash,))
+    cursor.execute("SELECT user_id FROM users WHERE api_key_hash = %s AND is_active = 1", (api_key_hash,))
     row = cursor.fetchone()
     conn.close()
     
@@ -140,19 +142,19 @@ def store_tokens(user_id: str, token_data: dict, scopes: list):
     scopes_str = " ".join(scopes)
     
     # Check if token already exists
-    cursor.execute("SELECT user_id FROM tokens WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT user_id FROM tokens WHERE user_id = %s", (user_id,))
     exists = cursor.fetchone()
     
     if exists:
         cursor.execute("""
             UPDATE tokens
-            SET access_token = ?, refresh_token = ?, token_expiry = ?, scopes = ?, updated_at = ?
-            WHERE user_id = ?
+            SET access_token = %s, refresh_token = %s, token_expiry = %s, scopes = %s, updated_at = %s
+            WHERE user_id = %s
         """, (encrypted_access, encrypted_refresh, token_expiry, scopes_str, datetime.utcnow(), user_id))
     else:
         cursor.execute("""
             INSERT INTO tokens (user_id, access_token, refresh_token, token_expiry, scopes, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, (user_id, encrypted_access, encrypted_refresh, token_expiry, scopes_str, datetime.utcnow()))
     
     conn.commit()
@@ -166,7 +168,7 @@ def get_user_tokens(user_id: str) -> Optional[dict]:
     cursor.execute("""
         SELECT access_token, refresh_token, token_expiry, scopes
         FROM tokens
-        WHERE user_id = ?
+        WHERE user_id = %s
     """, (user_id,))
     
     row = cursor.fetchone()
@@ -194,7 +196,7 @@ def create_session(user_id: str, ip_address: str, user_agent: str) -> str:
     
     cursor.execute("""
         INSERT INTO sessions (session_token, user_id, created_at, expires_at, ip_address, user_agent)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s)
     """, (session_token, user_id, datetime.utcnow(), expires_at, ip_address, user_agent))
     
     conn.commit()
@@ -209,7 +211,7 @@ def get_user_from_session(session_token: str) -> Optional[str]:
     
     cursor.execute("""
         SELECT user_id FROM sessions
-        WHERE session_token = ? AND expires_at > ?
+        WHERE session_token = %s AND expires_at > %s
     """, (session_token, datetime.utcnow()))
     
     row = cursor.fetchone()
@@ -224,7 +226,7 @@ def log_action(user_id: str, action: str, success: bool, ip_address: str, detail
     
     cursor.execute("""
         INSERT INTO audit_logs (user_id, action, timestamp, success, ip_address, details)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s)
     """, (user_id, action, datetime.utcnow(), success, ip_address, details))
     
     conn.commit()
@@ -235,7 +237,7 @@ def update_last_login(user_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("UPDATE users SET last_login = ? WHERE user_id = ?", (datetime.utcnow(), user_id))
+    cursor.execute("UPDATE users SET last_login = %s WHERE user_id = %s", (datetime.utcnow(), user_id))
     
     conn.commit()
     conn.close()
@@ -554,7 +556,7 @@ async def get_auth_status(api_key: str) -> dict:
     
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT email, display_name, last_login FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT email, display_name, last_login FROM users WHERE user_id = %s", (user_id,))
     row = cursor.fetchone()
     conn.close()
     
