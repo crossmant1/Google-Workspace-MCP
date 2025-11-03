@@ -260,6 +260,11 @@ async def verify_api_key(api_key: Optional[str]) -> Optional[str]:
 # Create MCP instance
 mcp = FastMCP("Google Drive MCP")
 
+@app.get("/myip")
+async def get_ip():
+    import requests
+    return requests.get("https://api.ipify.org?format=json").json()
+
 # --- MCP Tools ---
 @mcp.tool()
 async def list_drive_files(api_key: str, max_results: int = 20) -> dict:
