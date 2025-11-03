@@ -260,11 +260,6 @@ async def verify_api_key(api_key: Optional[str]) -> Optional[str]:
 # Create MCP instance
 mcp = FastMCP("Google Drive MCP")
 
-@app.get("/myip")
-async def get_ip():
-    import requests
-    return requests.get("https://api.ipify.org?format=json").json()
-
 # --- MCP Tools ---
 @mcp.tool()
 async def list_drive_files(api_key: str, max_results: int = 20) -> dict:
@@ -736,6 +731,11 @@ async def root(request):
         }
     })
 
+async def my_ip(request):
+    """Returns the current outbound IP of the Render service."""
+    ip = requests.get("https://api.ipify.org?format=json").json()
+    return StarletteJSONResponse(ip)
+
 # Create main app
 app = Starlette(
     routes=[
@@ -743,6 +743,7 @@ app = Starlette(
         Route("/auth", start_auth),
         Route("/oauth2callback", oauth_callback),
         Route("/health", health),
+        Route("/myip", my_ip),
         Mount("/", mcp_asgi),
     ],
     lifespan=mcp_asgi.lifespan,
