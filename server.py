@@ -46,19 +46,27 @@ SCOPES = [
 # Database connection string
 def get_db_connection():
     """Create a connection to Azure SQL Database using pymssql"""
-    # Extract server name without port (pymssql adds port separately)
-    server = AZURE_SQL_SERVER.replace('.database.windows.net', '')
+    # Extract server name without port and domain suffix
+    server = AZURE_SQL_SERVER
+    if '.database.windows.net' in server:
+        server = server.split('.database.windows.net')[0]
     
-    return pymssql.connect(
-        server=server + '.database.windows.net',
-        user=AZURE_SQL_USERNAME,
-        password=AZURE_SQL_PASSWORD,
-        database=AZURE_SQL_DATABASE,
-        port=1433,
-        timeout=30,
-        login_timeout=30,
-        as_dict=False
-    )
+    try:
+        conn = pymssql.connect(
+            server=server + '.database.windows.net',
+            user=AZURE_SQL_USERNAME,
+            password=AZURE_SQL_PASSWORD,
+            database=AZURE_SQL_DATABASE,
+            port=1433,
+            timeout=30,
+            login_timeout=30,
+            as_dict=False,
+            tds_version='7.0'  # Specify TDS version for better Azure SQL compatibility
+        )
+        return conn
+    except pymssql.Error as e:
+        print(f"Database connection error: {e}")
+        raise
 
 # Database helper functions
 def encrypt_token(token_data: dict) -> str:
