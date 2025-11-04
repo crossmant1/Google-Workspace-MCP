@@ -25,14 +25,15 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/calendar.events"
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/tasks"
 ]
 
 # In-memory token storage for single user
 stored_token = None
 
 # Create MCP instance
-mcp = FastMCP("Google Drive, Gmail & Calendar MCP")
+mcp = FastMCP("Google Drive, Gmail, Calendar & Tasks MCP")
 
 # --- HELPER FUNCTIONS ---
 
@@ -1157,14 +1158,376 @@ async def search_calendar_events(query: str, max_results: int = 10, calendar_id:
     except Exception as e:
         return {"error": str(e), "traceback": traceback.format_exc()}
 
+# --- GOOGLE TASKS TOOLS ---
+
+@mcp.tool()
+async def list_task_lists() -> dict:
+    """List all Google Tasks task lists
+    
+    Returns:
+        Dictionary containing list of task lists (id, title)
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+
+        creds = _get_credentials()
+        service = build("tasks", "v1", credentials=creds)
+        
+        results = service.tasklists().list().execute()
+        task_lists = results.get("items", [])
+        
+        formatted_lists = [
+            {
+                "id": tl["id"],
+                "title": tl["title"],
+                "updated": tl.get("updated", "")
+            }
+            for tl in task_lists
+        ]
+        
+        return {
+            "success": True,
+            "count": len(formatted_lists),
+            "task_lists": formatted_lists
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def list_tasks(task_list_id: str = "@default", show_completed: bool = False) -> dict:
+    """List tasks from a Google Tasks list
+    
+    Args:
+        task_list_id: The task list ID (default: "@default" for default list)
+        show_completed: Whether to include completed tasks (default: False)
+    
+    Returns:
+        Dictionary containing list of tasks with details (id, title, notes, due, status)
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+
+        creds = _get_credentials()
+        service = build("tasks", "v1", credentials=creds)
+        
+        params = {"tasklist": task_list_id}
+        if show_completed:
+            params["showCompleted"] = True
+        
+        results = service.tasks().list(**params).execute()
+        tasks = results.get("items", [])
+        
+        if not tasks:
+            return {
+                "success": True,
+                "count": 0,
+                "tasks": [],
+                "task_list_id": task_list_id
+            }
+        
+        formatted_tasks = []
+        for task in tasks:
+            formatted_tasks.append({
+                "id": task["id"],
+                "title": task.get("title", "(No title)"),
+                "notes": task.get("notes", ""),
+                "due": task.get("due", ""),
+                "status": task.get("status", ""),
+                "updated": task.get("updated", ""),
+                "completed": task.get("completed", "")
+            })
+        
+        return {
+            "success": True,
+            "count": len(formatted_tasks),
+            "task_list_id": task_list_id,
+            "tasks": formatted_tasks
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def create_task(
+    title: str,
+    notes: str = "",
+    due: str = "",
+    task_list_id: str = "@default"
+) -> dict:
+    """Create a new task in Google Tasks
+    
+    Args:
+        title: Task title (required)
+        notes: Task notes/description (optional)
+        due: Due date in RFC 3339 format (e.g., "2024-11-04T00:00:00Z") (optional)
+        task_list_id: The task list ID (default: "@default" for default list)
+    
+    Returns:
+        Dictionary with success status and created task details
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+
+        creds = _get_credentials()
+        service = build("tasks", "v1", credentials=creds)
+        
+        task = {
+            "title": title
+        }
+        
+        if notes:
+            task["notes"] = notes
+        if due:
+            task["due"] = due
+        
+        result = service.tasks().insert(
+            tasklist=task_list_id,
+            body=task
+        ).execute()
+        
+        return {
+            "success": True,
+            "task_id": result["id"],
+            "title": result["title"],
+            "notes": result.get("notes", ""),
+            "due": result.get("due", ""),
+            "status": result.get("status", ""),
+            "message": "Task created successfully"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def create_task_from_email(
+    email_id: str,
+    task_list_id: str = "@default",
+    add_link: bool = True
+) -> dict:
+    """Create a Google Task from a Gmail email
+    
+    Args:
+        email_id: The Gmail message ID to create a task from (required)
+        task_list_id: The task list ID (default: "@default" for default list)
+        add_link: Whether to include a link to the email in the task notes (default: True)
+    
+    Returns:
+        Dictionary with success status and created task details
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+
+        creds = _get_credentials()
+        gmail_service = build("gmail", "v1", credentials=creds)
+        tasks_service = build("tasks", "v1", credentials=creds)
+        
+        # Get email details
+        message = gmail_service.users().messages().get(
+            userId="me",
+            id=email_id,
+            format="metadata",
+            metadataHeaders=["From", "Subject", "Date"]
+        ).execute()
+        
+        headers = {h["name"]: h["value"] for h in message.get("payload", {}).get("headers", [])}
+        snippet = message.get("snippet", "")
+        
+        subject = headers.get("Subject", "(No subject)")
+        from_email = headers.get("From", "Unknown sender")
+        
+        # Build task
+        task_title = f"Email: {subject}"
+        
+        task_notes = f"From: {from_email}\n\n{snippet}"
+        
+        if add_link:
+            # Gmail URL format
+            email_link = f"https://mail.google.com/mail/u/0/#inbox/{email_id}"
+            task_notes += f"\n\nEmail link: {email_link}"
+        
+        # Create the task
+        task = {
+            "title": task_title,
+            "notes": task_notes
+        }
+        
+        result = tasks_service.tasks().insert(
+            tasklist=task_list_id,
+            body=task
+        ).execute()
+        
+        return {
+            "success": True,
+            "task_id": result["id"],
+            "title": result["title"],
+            "notes": result.get("notes", ""),
+            "email_id": email_id,
+            "email_subject": subject,
+            "message": "Task created from email successfully"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "email_id": email_id, "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def update_task(
+    task_id: str,
+    title: str = "",
+    notes: str = "",
+    due: str = "",
+    status: str = "",
+    task_list_id: str = "@default"
+) -> dict:
+    """Update an existing task in Google Tasks
+    
+    Args:
+        task_id: The task ID to update (required)
+        title: New task title (optional - leave empty to keep unchanged)
+        notes: New task notes (optional)
+        due: New due date in RFC 3339 format (optional)
+        status: New status ("needsAction" or "completed") (optional)
+        task_list_id: The task list ID (default: "@default")
+    
+    Returns:
+        Dictionary with success status and updated task details
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+
+        creds = _get_credentials()
+        service = build("tasks", "v1", credentials=creds)
+        
+        # Get existing task
+        task = service.tasks().get(tasklist=task_list_id, task=task_id).execute()
+        
+        # Update fields if provided
+        if title:
+            task["title"] = title
+        if notes:
+            task["notes"] = notes
+        if due:
+            task["due"] = due
+        if status:
+            task["status"] = status
+        
+        # Update the task
+        result = service.tasks().update(
+            tasklist=task_list_id,
+            task=task_id,
+            body=task
+        ).execute()
+        
+        return {
+            "success": True,
+            "task_id": result["id"],
+            "title": result["title"],
+            "notes": result.get("notes", ""),
+            "due": result.get("due", ""),
+            "status": result.get("status", ""),
+            "message": "Task updated successfully"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "task_id": task_id, "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def complete_task(task_id: str, task_list_id: str = "@default") -> dict:
+    """Mark a task as completed in Google Tasks
+    
+    Args:
+        task_id: The task ID to complete (required)
+        task_list_id: The task list ID (default: "@default")
+    
+    Returns:
+        Dictionary with success status
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+
+        creds = _get_credentials()
+        service = build("tasks", "v1", credentials=creds)
+        
+        # Get task and mark as completed
+        task = service.tasks().get(tasklist=task_list_id, task=task_id).execute()
+        task["status"] = "completed"
+        
+        result = service.tasks().update(
+            tasklist=task_list_id,
+            task=task_id,
+            body=task
+        ).execute()
+        
+        return {
+            "success": True,
+            "task_id": result["id"],
+            "title": result["title"],
+            "status": result["status"],
+            "message": "Task marked as completed"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "task_id": task_id, "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def delete_task(task_id: str, task_list_id: str = "@default") -> dict:
+    """Delete a task from Google Tasks
+    
+    Args:
+        task_id: The task ID to delete (required)
+        task_list_id: The task list ID (default: "@default")
+    
+    Returns:
+        Dictionary with success status
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+
+        creds = _get_credentials()
+        service = build("tasks", "v1", credentials=creds)
+        
+        # Delete the task
+        service.tasks().delete(tasklist=task_list_id, task=task_id).execute()
+        
+        return {
+            "success": True,
+            "task_id": task_id,
+            "task_list_id": task_list_id,
+            "message": "Task deleted successfully"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "task_id": task_id, "traceback": traceback.format_exc()}
+
 @mcp.tool()
 async def get_auth_status() -> dict:
-    """Check if the server is authenticated with Google Drive, Gmail, and Calendar, and get authenticated user info"""
+    """Check if the server is authenticated with Google Drive, Gmail, Calendar, and Tasks, and get authenticated user info"""
     status = {
         "authenticated": stored_token is not None,
         "owner": OWNER_EMAIL if stored_token else None,
         "scopes": SCOPES,
-        "message": "Connected to Google Drive, Gmail, and Calendar" if stored_token else "Not authenticated. Please visit /auth to connect."
+        "message": "Connected to Google Drive, Gmail, Calendar, and Tasks" if stored_token else "Not authenticated. Please visit /auth to connect."
     }
     
     if stored_token:
@@ -1255,7 +1618,7 @@ async def health(request):
 
 async def root(request):
     return StarletteJSONResponse({
-        "service": "Google Drive, Gmail & Calendar MCP Server",
+        "service": "Google Drive, Gmail, Calendar & Tasks MCP Server",
         "endpoints": {
             "auth": "/auth - Start OAuth flow",
             "callback": "/oauth2callback - OAuth callback",
@@ -1268,6 +1631,7 @@ async def root(request):
             "Drive: list_drive_files, search_drive_files, read_file_by_name, read_file_content, update_document_content, update_document_by_name",
             "Gmail: list_emails, read_email, send_email, search_emails, mark_email_as_read, mark_email_as_unread",
             "Calendar: list_calendar_events, create_calendar_event, update_calendar_event, delete_calendar_event, search_calendar_events",
+            "Tasks: list_task_lists, list_tasks, create_task, create_task_from_email, update_task, complete_task, delete_task",
             "Auth: get_auth_status"
         ]
     })
