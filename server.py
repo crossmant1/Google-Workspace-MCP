@@ -23,14 +23,16 @@ SCOPES = [
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.modify"
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/calendar.events"
 ]
 
 # In-memory token storage for single user
 stored_token = None
 
 # Create MCP instance
-mcp = FastMCP("Google Drive & Gmail MCP")
+mcp = FastMCP("Google Drive, Gmail & Calendar MCP")
 
 # --- HELPER FUNCTIONS ---
 
@@ -810,14 +812,359 @@ async def mark_email_as_unread(email_id: str) -> dict:
     except Exception as e:
         return {"error": str(e), "email_id": email_id, "traceback": traceback.format_exc()}
 
+# --- CALENDAR TOOLS ---
+
+@mcp.tool()
+async def list_calendar_events(max_results: int = 10, time_min: str = "", time_max: str = "", calendar_id: str = "primary") -> dict:
+    """List upcoming events from Google Calendar
+    
+    Args:
+        max_results: Maximum number of events to return (default: 10, max: 100)
+        time_min: Lower bound (inclusive) for event start time (ISO 8601 format, e.g., "2024-11-04T00:00:00Z")
+                  Leave empty to start from now
+        time_max: Upper bound (exclusive) for event start time (ISO 8601 format)
+                  Leave empty for no upper bound
+        calendar_id: Calendar identifier (default: "primary" for user's primary calendar)
+    
+    Returns:
+        Dictionary containing list of events with details (id, summary, start, end, description, location)
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+        from datetime import datetime, timezone
+
+        max_results = min(max_results, 100)
+        creds = _get_credentials()
+        service = build("calendar", "v3", credentials=creds)
+        
+        # Build query parameters
+        query_params = {
+            "calendarId": calendar_id,
+            "maxResults": max_results,
+            "singleEvents": True,
+            "orderBy": "startTime"
+        }
+        
+        # Use current time if time_min not specified
+        if time_min:
+            query_params["timeMin"] = time_min
+        else:
+            query_params["timeMin"] = datetime.now(timezone.utc).isoformat()
+        
+        if time_max:
+            query_params["timeMax"] = time_max
+        
+        # Get events
+        events_result = service.events().list(**query_params).execute()
+        events = events_result.get("items", [])
+        
+        if not events:
+            return {
+                "success": True,
+                "count": 0,
+                "events": [],
+                "calendar_id": calendar_id
+            }
+        
+        # Format events
+        event_list = []
+        for event in events:
+            start = event["start"].get("dateTime", event["start"].get("date"))
+            end = event["end"].get("dateTime", event["end"].get("date"))
+            
+            event_list.append({
+                "id": event["id"],
+                "summary": event.get("summary", "(No title)"),
+                "description": event.get("description", ""),
+                "location": event.get("location", ""),
+                "start": start,
+                "end": end,
+                "status": event.get("status", ""),
+                "htmlLink": event.get("htmlLink", ""),
+                "attendees": [
+                    {"email": a.get("email"), "responseStatus": a.get("responseStatus")}
+                    for a in event.get("attendees", [])
+                ]
+            })
+        
+        return {
+            "success": True,
+            "count": len(event_list),
+            "calendar_id": calendar_id,
+            "events": event_list
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def create_calendar_event(
+    summary: str,
+    start_time: str,
+    end_time: str,
+    description: str = "",
+    location: str = "",
+    attendees: str = "",
+    calendar_id: str = "primary"
+) -> dict:
+    """Create a new event in Google Calendar
+    
+    Args:
+        summary: Event title/summary (required)
+        start_time: Event start time in ISO 8601 format (e.g., "2024-11-04T10:00:00-05:00" or "2024-11-04" for all-day)
+        end_time: Event end time in ISO 8601 format (e.g., "2024-11-04T11:00:00-05:00" or "2024-11-05" for all-day)
+        description: Event description (optional)
+        location: Event location (optional)
+        attendees: Comma-separated list of attendee email addresses (optional, e.g., "person1@example.com,person2@example.com")
+        calendar_id: Calendar identifier (default: "primary" for user's primary calendar)
+    
+    Returns:
+        Dictionary with success status and created event details
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+
+        creds = _get_credentials()
+        service = build("calendar", "v3", credentials=creds)
+        
+        # Build event object
+        event = {
+            "summary": summary,
+            "description": description,
+            "location": location,
+        }
+        
+        # Handle start time (check if all-day event)
+        if "T" in start_time:
+            event["start"] = {"dateTime": start_time, "timeZone": "America/New_York"}
+        else:
+            event["start"] = {"date": start_time}
+        
+        # Handle end time
+        if "T" in end_time:
+            event["end"] = {"dateTime": end_time, "timeZone": "America/New_York"}
+        else:
+            event["end"] = {"date": end_time}
+        
+        # Add attendees if provided
+        if attendees:
+            attendee_list = [{"email": email.strip()} for email in attendees.split(",")]
+            event["attendees"] = attendee_list
+        
+        # Create the event
+        created_event = service.events().insert(
+            calendarId=calendar_id,
+            body=event,
+            sendUpdates="all" if attendees else "none"
+        ).execute()
+        
+        return {
+            "success": True,
+            "event_id": created_event["id"],
+            "summary": created_event.get("summary"),
+            "start": created_event["start"].get("dateTime", created_event["start"].get("date")),
+            "end": created_event["end"].get("dateTime", created_event["end"].get("date")),
+            "htmlLink": created_event.get("htmlLink"),
+            "message": "Event created successfully"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def update_calendar_event(
+    event_id: str,
+    summary: str = "",
+    start_time: str = "",
+    end_time: str = "",
+    description: str = "",
+    location: str = "",
+    calendar_id: str = "primary"
+) -> dict:
+    """Update an existing event in Google Calendar
+    
+    Args:
+        event_id: The event ID to update (required)
+        summary: New event title/summary (optional - leave empty to keep unchanged)
+        start_time: New start time in ISO 8601 format (optional)
+        end_time: New end time in ISO 8601 format (optional)
+        description: New event description (optional)
+        location: New event location (optional)
+        calendar_id: Calendar identifier (default: "primary")
+    
+    Returns:
+        Dictionary with success status and updated event details
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+
+        creds = _get_credentials()
+        service = build("calendar", "v3", credentials=creds)
+        
+        # Get the existing event
+        event = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+        
+        # Update fields if provided
+        if summary:
+            event["summary"] = summary
+        if description:
+            event["description"] = description
+        if location:
+            event["location"] = location
+        
+        if start_time:
+            if "T" in start_time:
+                event["start"] = {"dateTime": start_time, "timeZone": "America/New_York"}
+            else:
+                event["start"] = {"date": start_time}
+        
+        if end_time:
+            if "T" in end_time:
+                event["end"] = {"dateTime": end_time, "timeZone": "America/New_York"}
+            else:
+                event["end"] = {"date": end_time}
+        
+        # Update the event
+        updated_event = service.events().update(
+            calendarId=calendar_id,
+            eventId=event_id,
+            body=event
+        ).execute()
+        
+        return {
+            "success": True,
+            "event_id": updated_event["id"],
+            "summary": updated_event.get("summary"),
+            "start": updated_event["start"].get("dateTime", updated_event["start"].get("date")),
+            "end": updated_event["end"].get("dateTime", updated_event["end"].get("date")),
+            "htmlLink": updated_event.get("htmlLink"),
+            "message": "Event updated successfully"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "event_id": event_id, "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def delete_calendar_event(event_id: str, calendar_id: str = "primary") -> dict:
+    """Delete an event from Google Calendar
+    
+    Args:
+        event_id: The event ID to delete (required)
+        calendar_id: Calendar identifier (default: "primary" for user's primary calendar)
+    
+    Returns:
+        Dictionary with success status
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+
+        creds = _get_credentials()
+        service = build("calendar", "v3", credentials=creds)
+        
+        # Delete the event
+        service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        
+        return {
+            "success": True,
+            "event_id": event_id,
+            "calendar_id": calendar_id,
+            "message": "Event deleted successfully"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "event_id": event_id, "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def search_calendar_events(query: str, max_results: int = 10, calendar_id: str = "primary") -> dict:
+    """Search for events in Google Calendar by keyword
+    
+    Args:
+        query: Search query to match against event summaries, descriptions, locations, and attendee names/emails
+        max_results: Maximum number of events to return (default: 10, max: 100)
+        calendar_id: Calendar identifier (default: "primary" for user's primary calendar)
+    
+    Returns:
+        Dictionary containing matching events
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from googleapiclient.discovery import build
+        from datetime import datetime, timezone
+
+        max_results = min(max_results, 100)
+        creds = _get_credentials()
+        service = build("calendar", "v3", credentials=creds)
+        
+        # Search events
+        events_result = service.events().list(
+            calendarId=calendar_id,
+            maxResults=max_results,
+            singleEvents=True,
+            orderBy="startTime",
+            timeMin=datetime.now(timezone.utc).isoformat(),
+            q=query
+        ).execute()
+        
+        events = events_result.get("items", [])
+        
+        if not events:
+            return {
+                "success": True,
+                "count": 0,
+                "query": query,
+                "events": [],
+                "calendar_id": calendar_id
+            }
+        
+        # Format events
+        event_list = []
+        for event in events:
+            start = event["start"].get("dateTime", event["start"].get("date"))
+            end = event["end"].get("dateTime", event["end"].get("date"))
+            
+            event_list.append({
+                "id": event["id"],
+                "summary": event.get("summary", "(No title)"),
+                "description": event.get("description", ""),
+                "location": event.get("location", ""),
+                "start": start,
+                "end": end,
+                "htmlLink": event.get("htmlLink", "")
+            })
+        
+        return {
+            "success": True,
+            "count": len(event_list),
+            "query": query,
+            "calendar_id": calendar_id,
+            "events": event_list
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
 @mcp.tool()
 async def get_auth_status() -> dict:
-    """Check if the server is authenticated with Google Drive and Gmail, and get authenticated user info"""
+    """Check if the server is authenticated with Google Drive, Gmail, and Calendar, and get authenticated user info"""
     status = {
         "authenticated": stored_token is not None,
         "owner": OWNER_EMAIL if stored_token else None,
         "scopes": SCOPES,
-        "message": "Connected to Google Drive and Gmail" if stored_token else "Not authenticated. Please visit /auth to connect."
+        "message": "Connected to Google Drive, Gmail, and Calendar" if stored_token else "Not authenticated. Please visit /auth to connect."
     }
     
     if stored_token:
@@ -908,7 +1255,7 @@ async def health(request):
 
 async def root(request):
     return StarletteJSONResponse({
-        "service": "Google Drive & Gmail MCP Server",
+        "service": "Google Drive, Gmail & Calendar MCP Server",
         "endpoints": {
             "auth": "/auth - Start OAuth flow",
             "callback": "/oauth2callback - OAuth callback",
@@ -920,6 +1267,7 @@ async def root(request):
         "available_tools": [
             "Drive: list_drive_files, search_drive_files, read_file_by_name, read_file_content, update_document_content, update_document_by_name",
             "Gmail: list_emails, read_email, send_email, search_emails, mark_email_as_read, mark_email_as_unread",
+            "Calendar: list_calendar_events, create_calendar_event, update_calendar_event, delete_calendar_event, search_calendar_events",
             "Auth: get_auth_status"
         ]
     })
