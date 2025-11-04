@@ -615,8 +615,8 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
 
 # --- GMAIL TOOLS (new) ---
 
-@mcp.tool()
-async def list_emails(max_results: int = 20, query: str = "") -> dict:
+async def _list_emails_helper(max_results: int = 20, query: str = "") -> dict:
+    """Helper function to list emails - used by multiple tools"""
     """List emails from Gmail inbox
     
     Args:
