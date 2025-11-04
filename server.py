@@ -1329,18 +1329,30 @@ async def create_task_from_email(
 
     try:
         from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
 
         creds = _get_credentials()
         gmail_service = build("gmail", "v1", credentials=creds)
         tasks_service = build("tasks", "v1", credentials=creds)
         
-        # Get email details
-        message = gmail_service.users().messages().get(
-            userId="me",
-            id=email_id,
-            format="metadata",
-            metadataHeaders=["From", "Subject", "Date"]
-        ).execute()
+        # Get email details with better error handling
+        try:
+            message = gmail_service.users().messages().get(
+                userId="me",
+                id=email_id,
+                format="metadata",
+                metadataHeaders=["From", "Subject", "Date"]
+            ).execute()
+        except HttpError as e:
+            if e.resp.status == 404:
+                return {
+                    "success": False,
+                    "error": f"Email not found with ID: {email_id}",
+                    "hint": "Please verify the email ID is correct. Use list_emails or search_emails to get valid email IDs.",
+                    "email_id": email_id
+                }
+            else:
+                raise  # Re-raise other HTTP errors
         
         headers = {h["name"]: h["value"] for h in message.get("payload", {}).get("headers", [])}
         snippet = message.get("snippet", "")
@@ -1379,8 +1391,21 @@ async def create_task_from_email(
             "message": "Task created from email successfully"
         }
         
+    except HttpError as e:
+        return {
+            "success": False,
+            "error": f"Gmail API error: {e.resp.status} - {e.resp.reason}",
+            "details": str(e),
+            "email_id": email_id,
+            "traceback": traceback.format_exc()
+        }
     except Exception as e:
-        return {"error": str(e), "email_id": email_id, "traceback": traceback.format_exc()}
+        return {
+            "success": False,
+            "error": str(e), 
+            "email_id": email_id, 
+            "traceback": traceback.format_exc()
+        }
 
 @mcp.tool()
 async def update_task(
