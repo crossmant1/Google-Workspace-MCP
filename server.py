@@ -32,10 +32,22 @@ stored_token = None
 # Create MCP instance
 mcp = FastMCP("Google Drive & Gmail MCP")
 
-# Add dependencies for proper async handling
-import asyncio
+# --- HELPER FUNCTIONS ---
 
-# --- DRIVE TOOLS (existing) ---
+def _get_credentials():
+    """Helper to create Google credentials from stored token"""
+    from google.oauth2.credentials import Credentials
+    return Credentials(
+        token=stored_token.get("access_token"),
+        refresh_token=stored_token.get("refresh_token"),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=CLIENT_ID,
+        client_secret=CLIENT_SECRET,
+        scopes=SCOPES,
+    )
+
+# --- DRIVE TOOLS ---
+
 @mcp.tool()
 async def list_drive_files(max_results: int = 20) -> dict:
     """List files from Google Drive
@@ -47,21 +59,12 @@ async def list_drive_files(max_results: int = 20) -> dict:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
         max_results = min(max_results, 100)
-        
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
+        creds = _get_credentials()
         service = build("drive", "v3", credentials=creds)
+        
         res = service.files().list(
             pageSize=max_results, 
             fields="files(id,name,mimeType,modifiedTime,size)"
@@ -82,19 +85,10 @@ async def _read_file_content_helper(file_id: str) -> dict:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaIoBaseDownload
 
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
+        creds = _get_credentials()
         service = build("drive", "v3", credentials=creds)
         
         # Get file metadata
@@ -202,19 +196,11 @@ async def search_drive_files(query: str, max_results: int = 10) -> dict:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
+        creds = _get_credentials()
         service = build("drive", "v3", credentials=creds)
+        
         safe_query = query.replace("'", "\\'")
         res = service.files().list(
             q=f"name contains '{safe_query}'",
@@ -246,19 +232,11 @@ async def read_file_by_name(file_name: str) -> dict:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
+        creds = _get_credentials()
         service = build("drive", "v3", credentials=creds)
+        
         safe_query = file_name.replace("'", "\\'")
         
         # Search for the file
@@ -323,48 +301,20 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
         from googleapiclient.errors import HttpError
 
-        print(f"\n=== UPDATE DOCUMENT DEBUG ===")
-        print(f"File ID: {file_id}")
-        print(f"Content length: {len(new_content)} chars")
-        print(f"Token present: {stored_token is not None}")
-        print(f"Scopes configured: {SCOPES}")
-
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
-        print(f"Credentials created, valid: {creds.valid}")
-        print(f"Token: {creds.token[:20]}..." if creds.token else "No token")
-        print(f"Scopes in creds: {creds.scopes}")
-
-        # Get file metadata to check type
+        creds = _get_credentials()
         drive_service = build("drive", "v3", credentials=creds)
-        print("Drive service built successfully")
         
         file_metadata = drive_service.files().get(
             fileId=file_id,
             fields="id,name,mimeType,capabilities"
         ).execute()
         
-        print(f"File metadata retrieved: {file_metadata.get('name')}")
-        print(f"MIME type: {file_metadata.get('mimeType')}")
-        print(f"Capabilities: {file_metadata.get('capabilities')}")
-        
         mime_type = file_metadata.get("mimeType", "")
-        
-        # Check if we can edit
         capabilities = file_metadata.get("capabilities", {})
         can_edit = capabilities.get("canEdit", False)
-        print(f"Can edit: {can_edit}")
         
         if not can_edit:
             return {
@@ -377,19 +327,10 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
         
         # Handle Google Docs
         if mime_type == "application/vnd.google-apps.document":
-            print("Building Docs service...")
             docs_service = build("docs", "v1", credentials=creds)
-            print("Docs service built successfully")
-            
-            # Get the current document to find the end index
-            print("Fetching document structure...")
             doc = docs_service.documents().get(documentId=file_id).execute()
-            print(f"Document retrieved: {doc.get('title')}")
-            
             content_length = doc.get('body').get('content')[-1].get('endIndex') - 1
-            print(f"Current content length: {content_length}")
             
-            # Delete all existing content and insert new content
             requests_payload = [
                 {
                     'deleteContentRange': {
@@ -409,16 +350,10 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
                 }
             ]
             
-            print(f"Sending batchUpdate request...")
-            print(f"Request payload: {requests_payload}")
-            
             result = docs_service.documents().batchUpdate(
                 documentId=file_id,
                 body={'requests': requests_payload}
             ).execute()
-            
-            print(f"BatchUpdate result: {result}")
-            print("=== UPDATE COMPLETE ===\n")
             
             return {
                 "success": True,
@@ -437,25 +372,20 @@ async def update_document_content(file_id: str, new_content: str) -> dict:
             }
         
     except HttpError as e:
-        error_details = {
+        return {
             "error_type": "HttpError",
             "status_code": e.resp.status,
             "reason": e.resp.reason,
-            "error_details": e.error_details if hasattr(e, 'error_details') else str(e),
             "file_id": file_id,
             "traceback": traceback.format_exc()
         }
-        print(f"HTTP Error occurred: {error_details}")
-        return error_details
     except Exception as e:
-        error_details = {
+        return {
             "error_type": type(e).__name__,
             "error": str(e),
             "file_id": file_id,
             "traceback": traceback.format_exc()
         }
-        print(f"Exception occurred: {error_details}")
-        return error_details
 
 @mcp.tool()
 async def update_document_by_name(file_name: str, new_content: str) -> dict:
@@ -472,19 +402,12 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
 
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
+        creds = _get_credentials()
         service = build("drive", "v3", credentials=creds)
+        
         safe_query = file_name.replace("'", "\\'")
         
         # Search for Google Docs with matching name
@@ -506,9 +429,6 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
         # Use the first matching file
         file_id = files[0]["id"]
         
-        print(f"Found file: {files[0]['name']} (ID: {file_id})")
-        
-        # Build the result with match info
         result = {
             "searched_for": file_name,
             "matched_file": files[0]["name"]
@@ -518,28 +438,15 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
             result["note"] = f"Found {len(files)} matching documents, updating the first one: '{files[0]['name']}'"
             result["other_matches"] = [{"id": f["id"], "name": f["name"]} for f in files[1:]]
         
-        # Update the document by directly implementing the logic here
-        # (Can't call another @mcp.tool() from within a tool)
-        from googleapiclient.errors import HttpError
-        
-        print(f"\n=== UPDATE DOCUMENT DEBUG (from update_by_name) ===")
-        print(f"File ID: {file_id}")
-        print(f"Content length: {len(new_content)} chars")
-        
         # Get file metadata to check type and permissions
         file_metadata = service.files().get(
             fileId=file_id,
             fields="id,name,mimeType,capabilities"
         ).execute()
         
-        print(f"File metadata retrieved: {file_metadata.get('name')}")
-        print(f"MIME type: {file_metadata.get('mimeType')}")
-        
         mime_type = file_metadata.get("mimeType", "")
         capabilities = file_metadata.get("capabilities", {})
         can_edit = capabilities.get("canEdit", False)
-        
-        print(f"Can edit: {can_edit}")
         
         if not can_edit:
             result.update({
@@ -565,8 +472,6 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
         doc = docs_service.documents().get(documentId=file_id).execute()
         content_length = doc.get('body').get('content')[-1].get('endIndex') - 1
         
-        print(f"Current content length: {content_length}")
-        
         requests_payload = [
             {
                 'deleteContentRange': {
@@ -586,14 +491,10 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
             }
         ]
         
-        print(f"Sending batchUpdate request...")
         api_result = docs_service.documents().batchUpdate(
             documentId=file_id,
             body={'requests': requests_payload}
         ).execute()
-        
-        print(f"BatchUpdate successful!")
-        print("=== UPDATE COMPLETE ===\n")
         
         result.update({
             "success": True,
@@ -613,39 +514,18 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
             "traceback": traceback.format_exc()
         }
 
-# --- GMAIL TOOLS (new) ---
+# --- GMAIL TOOLS ---
 
 async def _list_emails_helper(max_results: int = 20, query: str = "") -> dict:
-    """Helper function to list emails - used by multiple tools"""
-    """List emails from Gmail inbox
-    
-    Args:
-        max_results: Maximum number of emails to return (default: 20, max: 100)
-        query: Gmail search query (e.g., "is:unread", "from:someone@example.com", "subject:important")
-               Leave empty to get all emails. See Gmail search operators for more options.
-    
-    Returns:
-        Dictionary containing list of emails with basic info (id, threadId, snippet, date, from, subject)
-    """
+    """Helper function to list emails - used by list_emails and search_emails"""
     if not stored_token:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
-        from datetime import datetime
 
         max_results = min(max_results, 100)
-        
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
+        creds = _get_credentials()
         service = build("gmail", "v1", credentials=creds)
         
         # List messages
@@ -701,6 +581,20 @@ async def _list_emails_helper(max_results: int = 20, query: str = "") -> dict:
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 @mcp.tool()
+async def list_emails(max_results: int = 20, query: str = "") -> dict:
+    """List emails from Gmail inbox
+    
+    Args:
+        max_results: Maximum number of emails to return (default: 20, max: 100)
+        query: Gmail search query (e.g., "is:unread", "from:someone@example.com", "subject:important")
+               Leave empty to get all emails. See Gmail search operators for more options.
+    
+    Returns:
+        Dictionary containing list of emails with basic info (id, threadId, snippet, date, from, subject)
+    """
+    return await _list_emails_helper(max_results=max_results, query=query)
+
+@mcp.tool()
 async def read_email(email_id: str) -> dict:
     """Read the full content of a specific email
     
@@ -714,18 +608,9 @@ async def read_email(email_id: str) -> dict:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
+        creds = _get_credentials()
         service = build("gmail", "v1", credentials=creds)
         
         # Get full message
@@ -795,18 +680,9 @@ async def send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = 
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
+        creds = _get_credentials()
         service = build("gmail", "v1", credentials=creds)
         
         # Create message
@@ -862,8 +738,7 @@ async def search_emails(query: str, max_results: int = 20) -> dict:
     - after:2024/01/01 - emails after a date
     - before:2024/12/31 - emails before a date
     """
-    # This uses the same logic as list_emails but with explicit search query
-    return await list_emails(max_results=max_results, query=query)
+    return await _list_emails_helper(max_results=max_results, query=query)
 
 @mcp.tool()
 async def mark_email_as_read(email_id: str) -> dict:
@@ -879,18 +754,9 @@ async def mark_email_as_read(email_id: str) -> dict:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
+        creds = _get_credentials()
         service = build("gmail", "v1", credentials=creds)
         
         # Remove UNREAD label
@@ -923,18 +789,9 @@ async def mark_email_as_unread(email_id: str) -> dict:
         return {"error": "No Google account connected. Please authenticate first at /auth"}
 
     try:
-        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        creds = Credentials(
-            token=stored_token.get("access_token"),
-            refresh_token=stored_token.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            scopes=SCOPES,
-        )
-
+        creds = _get_credentials()
         service = build("gmail", "v1", credentials=creds)
         
         # Add UNREAD label
@@ -965,17 +822,9 @@ async def get_auth_status() -> dict:
     
     if stored_token:
         try:
-            from google.oauth2.credentials import Credentials
             from googleapiclient.discovery import build
             
-            creds = Credentials(
-                token=stored_token.get("access_token"),
-                refresh_token=stored_token.get("refresh_token"),
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=CLIENT_ID,
-                client_secret=CLIENT_SECRET,
-                scopes=SCOPES,
-            )
+            creds = _get_credentials()
             
             # Get info about the authenticated user
             drive_service = build("drive", "v3", credentials=creds)
@@ -996,7 +845,7 @@ async def get_auth_status() -> dict:
     
     return status
 
-# Create the MCP ASGI app - this creates a Starlette app with the MCP endpoint at /mcp/
+# Create the MCP ASGI app
 mcp_asgi = mcp.http_app(path='/mcp')
 
 # Create a Starlette app to combine everything
