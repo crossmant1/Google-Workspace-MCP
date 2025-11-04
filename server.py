@@ -7,6 +7,9 @@ import requests
 import io
 import traceback
 import asyncio
+import base64
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 load_dotenv()
 
@@ -17,19 +20,22 @@ REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 OWNER_EMAIL = os.getenv("OWNER_EMAIL", "owner@example.com")
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/documents"
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.modify"
 ]
 
 # In-memory token storage for single user
 stored_token = None
 
 # Create MCP instance
-mcp = FastMCP("Google Drive MCP")
+mcp = FastMCP("Google Drive & Gmail MCP")
 
 # Add dependencies for proper async handling
 import asyncio
 
-# --- MCP Tools ---
+# --- DRIVE TOOLS (existing) ---
 @mcp.tool()
 async def list_drive_files(max_results: int = 20) -> dict:
     """List files from Google Drive
@@ -607,14 +613,354 @@ async def update_document_by_name(file_name: str, new_content: str) -> dict:
             "traceback": traceback.format_exc()
         }
 
+# --- GMAIL TOOLS (new) ---
+
+@mcp.tool()
+async def list_emails(max_results: int = 20, query: str = "") -> dict:
+    """List emails from Gmail inbox
+    
+    Args:
+        max_results: Maximum number of emails to return (default: 20, max: 100)
+        query: Gmail search query (e.g., "is:unread", "from:someone@example.com", "subject:important")
+               Leave empty to get all emails. See Gmail search operators for more options.
+    
+    Returns:
+        Dictionary containing list of emails with basic info (id, threadId, snippet, date, from, subject)
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+        from datetime import datetime
+
+        max_results = min(max_results, 100)
+        
+        creds = Credentials(
+            token=stored_token.get("access_token"),
+            refresh_token=stored_token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+
+        service = build("gmail", "v1", credentials=creds)
+        
+        # List messages
+        list_params = {
+            "userId": "me",
+            "maxResults": max_results
+        }
+        if query:
+            list_params["q"] = query
+            
+        results = service.users().messages().list(**list_params).execute()
+        messages = results.get("messages", [])
+        
+        if not messages:
+            return {
+                "success": True,
+                "count": 0,
+                "emails": [],
+                "query": query if query else "all emails"
+            }
+        
+        # Get details for each message
+        email_list = []
+        for msg in messages:
+            msg_data = service.users().messages().get(
+                userId="me",
+                id=msg["id"],
+                format="metadata",
+                metadataHeaders=["From", "To", "Subject", "Date"]
+            ).execute()
+            
+            headers = {h["name"]: h["value"] for h in msg_data.get("payload", {}).get("headers", [])}
+            
+            email_list.append({
+                "id": msg_data["id"],
+                "threadId": msg_data["threadId"],
+                "snippet": msg_data.get("snippet", ""),
+                "from": headers.get("From", "Unknown"),
+                "to": headers.get("To", ""),
+                "subject": headers.get("Subject", "(No subject)"),
+                "date": headers.get("Date", ""),
+                "labels": msg_data.get("labelIds", [])
+            })
+        
+        return {
+            "success": True,
+            "count": len(email_list),
+            "query": query if query else "all emails",
+            "emails": email_list
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def read_email(email_id: str) -> dict:
+    """Read the full content of a specific email
+    
+    Args:
+        email_id: The Gmail message ID to read
+    
+    Returns:
+        Dictionary containing full email details including body content
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=stored_token.get("access_token"),
+            refresh_token=stored_token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+
+        service = build("gmail", "v1", credentials=creds)
+        
+        # Get full message
+        message = service.users().messages().get(
+            userId="me",
+            id=email_id,
+            format="full"
+        ).execute()
+        
+        # Extract headers
+        headers = {h["name"]: h["value"] for h in message.get("payload", {}).get("headers", [])}
+        
+        # Extract body
+        def get_body(payload):
+            """Recursively extract email body from payload"""
+            if "body" in payload and "data" in payload["body"]:
+                return base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8", errors="replace")
+            
+            if "parts" in payload:
+                for part in payload["parts"]:
+                    if part.get("mimeType") == "text/plain":
+                        if "data" in part.get("body", {}):
+                            return base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", errors="replace")
+                    
+                    # Try recursively for nested parts
+                    body = get_body(part)
+                    if body:
+                        return body
+            
+            return None
+        
+        body = get_body(message.get("payload", {}))
+        
+        return {
+            "success": True,
+            "id": message["id"],
+            "threadId": message["threadId"],
+            "labels": message.get("labelIds", []),
+            "from": headers.get("From", "Unknown"),
+            "to": headers.get("To", ""),
+            "cc": headers.get("Cc", ""),
+            "subject": headers.get("Subject", "(No subject)"),
+            "date": headers.get("Date", ""),
+            "snippet": message.get("snippet", ""),
+            "body": body if body else "(Could not extract body - may be HTML only or have attachments)",
+            "raw_payload_available": "payload" in message
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "email_id": email_id, "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> dict:
+    """Send an email via Gmail
+    
+    Args:
+        to: Recipient email address (or comma-separated list for multiple recipients)
+        subject: Email subject line
+        body: Email body content (plain text)
+        cc: CC recipients (optional, comma-separated)
+        bcc: BCC recipients (optional, comma-separated)
+    
+    Returns:
+        Dictionary with success status and sent message details
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=stored_token.get("access_token"),
+            refresh_token=stored_token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+
+        service = build("gmail", "v1", credentials=creds)
+        
+        # Create message
+        message = MIMEText(body)
+        message["to"] = to
+        message["subject"] = subject
+        
+        if cc:
+            message["cc"] = cc
+        if bcc:
+            message["bcc"] = bcc
+        
+        # Encode message
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+        
+        # Send message
+        sent_message = service.users().messages().send(
+            userId="me",
+            body={"raw": raw_message}
+        ).execute()
+        
+        return {
+            "success": True,
+            "message_id": sent_message["id"],
+            "thread_id": sent_message["threadId"],
+            "to": to,
+            "subject": subject,
+            "message": "Email sent successfully"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def search_emails(query: str, max_results: int = 20) -> dict:
+    """Search emails using Gmail search operators
+    
+    Args:
+        query: Gmail search query (e.g., "from:someone@example.com", "subject:meeting", 
+               "is:unread after:2024/01/01", "has:attachment")
+        max_results: Maximum number of results to return (default: 20, max: 100)
+    
+    Returns:
+        Dictionary containing matching emails
+    
+    Common search operators:
+    - from:email@example.com - emails from a specific sender
+    - to:email@example.com - emails to a specific recipient
+    - subject:keyword - emails with keyword in subject
+    - is:unread - unread emails
+    - is:starred - starred emails
+    - has:attachment - emails with attachments
+    - after:2024/01/01 - emails after a date
+    - before:2024/12/31 - emails before a date
+    """
+    # This uses the same logic as list_emails but with explicit search query
+    return await list_emails(max_results=max_results, query=query)
+
+@mcp.tool()
+async def mark_email_as_read(email_id: str) -> dict:
+    """Mark an email as read
+    
+    Args:
+        email_id: The Gmail message ID to mark as read
+    
+    Returns:
+        Dictionary with success status
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=stored_token.get("access_token"),
+            refresh_token=stored_token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+
+        service = build("gmail", "v1", credentials=creds)
+        
+        # Remove UNREAD label
+        service.users().messages().modify(
+            userId="me",
+            id=email_id,
+            body={"removeLabelIds": ["UNREAD"]}
+        ).execute()
+        
+        return {
+            "success": True,
+            "email_id": email_id,
+            "message": "Email marked as read"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "email_id": email_id, "traceback": traceback.format_exc()}
+
+@mcp.tool()
+async def mark_email_as_unread(email_id: str) -> dict:
+    """Mark an email as unread
+    
+    Args:
+        email_id: The Gmail message ID to mark as unread
+    
+    Returns:
+        Dictionary with success status
+    """
+    if not stored_token:
+        return {"error": "No Google account connected. Please authenticate first at /auth"}
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+
+        creds = Credentials(
+            token=stored_token.get("access_token"),
+            refresh_token=stored_token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+
+        service = build("gmail", "v1", credentials=creds)
+        
+        # Add UNREAD label
+        service.users().messages().modify(
+            userId="me",
+            id=email_id,
+            body={"addLabelIds": ["UNREAD"]}
+        ).execute()
+        
+        return {
+            "success": True,
+            "email_id": email_id,
+            "message": "Email marked as unread"
+        }
+        
+    except Exception as e:
+        return {"error": str(e), "email_id": email_id, "traceback": traceback.format_exc()}
+
 @mcp.tool()
 async def get_auth_status() -> dict:
-    """Check if the server is authenticated with Google Drive and get authenticated user info"""
+    """Check if the server is authenticated with Google Drive and Gmail, and get authenticated user info"""
     status = {
         "authenticated": stored_token is not None,
         "owner": OWNER_EMAIL if stored_token else None,
         "scopes": SCOPES,
-        "message": "Connected to Google Drive" if stored_token else "Not authenticated. Please visit /auth to connect."
+        "message": "Connected to Google Drive and Gmail" if stored_token else "Not authenticated. Please visit /auth to connect."
     }
     
     if stored_token:
@@ -713,7 +1059,7 @@ async def health(request):
 
 async def root(request):
     return StarletteJSONResponse({
-        "service": "Google Drive MCP Server",
+        "service": "Google Drive & Gmail MCP Server",
         "endpoints": {
             "auth": "/auth - Start OAuth flow",
             "callback": "/oauth2callback - OAuth callback",
@@ -721,7 +1067,12 @@ async def root(request):
             "mcp": "/mcp/ - MCP protocol endpoint (POST only)"
         },
         "authenticated": stored_token is not None,
-        "scopes": SCOPES
+        "scopes": SCOPES,
+        "available_tools": [
+            "Drive: list_drive_files, search_drive_files, read_file_by_name, read_file_content, update_document_content, update_document_by_name",
+            "Gmail: list_emails, read_email, send_email, search_emails, mark_email_as_read, mark_email_as_unread",
+            "Auth: get_auth_status"
+        ]
     })
 
 # Create the main app using Starlette and mount everything
