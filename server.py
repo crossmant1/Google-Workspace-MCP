@@ -62,42 +62,33 @@ SCOPES = [
 # Database connection
 def get_db_connection():
     """Create a connection to Azure SQL Database using pyodbc"""
-    # Assumes a common ODBC driver; you may need to change this
-    driver = "{ODBC Driver 17 for SQL Server}" 
+    # Clean server name
+    server = AZURE_SQL_SERVER.replace('.database.windows.net', '').replace('tcp:', '')
     
-    # Check if server name already includes the port
-    server = AZURE_SQL_SERVER
-    if ",1433" not in server and ".database.windows.net" in server:
-        server = f"tcp:{server},1433"
-    elif ".database.windows.net" not in server:
-        # Fallback for just server name
-        server = f"tcp:{server}.database.windows.net,1433"
+    # Try multiple drivers in order of preference
+    drivers = ["{ODBC Driver 18 for SQL Server}", "{ODBC Driver 17 for SQL Server}"]
     
-    conn_str = (
-        f"DRIVER={driver};"
-        f"SERVER={server};"
-        f"DATABASE={AZURE_SQL_DATABASE};"
-        f"UID={AZURE_SQL_USERNAME};"
-        f"PWD={AZURE_SQL_PASSWORD};"
-        "Encrypt=yes;"
-        "TrustServerCertificate=no;"
-        "Connection Timeout=30;"
-    )
-    
-    try:
-        conn = pyodbc.connect(conn_str)
-        return conn
-    except pyodbc.Error as e:
-        print(f"Database connection error: {e}")
-        # Try a different driver as a fallback
+    for driver in drivers:
+        conn_str = (
+            f"DRIVER={driver};"
+            f"SERVER={server}.database.windows.net;"
+            f"DATABASE={AZURE_SQL_DATABASE};"
+            f"UID={AZURE_SQL_USERNAME};"
+            f"PWD={AZURE_SQL_PASSWORD};"
+            "Encrypt=yes;"
+            "TrustServerCertificate=no;"
+            "Connection Timeout=30;"
+        )
+        
         try:
-            driver = "{ODBC Driver 18 for SQL Server}"
-            conn_str = conn_str.replace("{ODBC Driver 17 for SQL Server}", driver)
             conn = pyodbc.connect(conn_str)
             return conn
-        except pyodbc.Error as e_inner:
-            print(f"Database connection error (fallback driver): {e_inner}")
-            raise
+        except pyodbc.Error as e:
+            if driver == drivers[-1]:  # Last driver attempt
+                print(f"Database connection failed with all drivers. Last error: {e}")
+                raise
+            # Try next driver
+            continue
 
 # Security helper functions
 def encrypt_token(token_data: dict) -> str:
@@ -121,37 +112,42 @@ def create_user(email: str, display_name: str) -> tuple:
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    user_id = secrets.token_urlsafe(16)
-    api_key = secrets.token_urlsafe(32)
-    api_key_hash = hash_api_key(api_key)
-    
-    cursor.execute("""
-        INSERT INTO users (user_id, email, display_name, api_key_hash, created_at, last_login, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (user_id, email, display_name, api_key_hash, datetime.utcnow(), datetime.utcnow(), 1))
-    
-    conn.commit()
-    conn.close()
-    
-    return user_id, api_key
-
+    try:
+        user_id = secrets.token_urlsafe(16)
+        api_key = secrets.token_urlsafe(32)
+        api_key_hash = hash_api_key(api_key)
+        
+        cursor.execute("""
+            INSERT INTO users (user_id, email, display_name, api_key_hash, created_at, last_login, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, email, display_name, api_key_hash, datetime.utcnow(), datetime.utcnow(), 1))
+        
+        conn.commit()
+        return user_id, api_key
+    finally:
+        cursor.close()
+        conn.close()
+        
 def get_user_by_email(email: str) -> Optional[dict]:
     """Get user by email"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT user_id, email, display_name, is_active FROM users WHERE email = ?", (email,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if row:
-        return {
-            "user_id": row[0],
-            "email": row[1],
-            "display_name": row[2],
-            "is_active": row[3]
-        }
-    return None
+    try:
+        cursor.execute("SELECT user_id, email, display_name, is_active FROM users WHERE email = ?", (email,))
+        row = cursor.fetchone()
+        
+        if row:
+            return {
+                "user_id": row[0],
+                "email": row[1],
+                "display_name": row[2],
+                "is_active": bool(row[3])
+            }
+        return None
+    finally:
+        cursor.close()
+        conn.close()
 
 def get_user_by_api_key(api_key: str) -> Optional[str]:
     """Get user_id by API key"""
@@ -160,101 +156,113 @@ def get_user_by_api_key(api_key: str) -> Optional[str]:
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT user_id FROM users WHERE api_key_hash = ? AND is_active = 1", (api_key_hash,))
-    row = cursor.fetchone()
-    conn.close()
-    
-    return row[0] if row else None
+    try:
+        cursor.execute("SELECT user_id FROM users WHERE api_key_hash = ? AND is_active = 1", (api_key_hash,))
+        row = cursor.fetchone()
+        return row[0] if row else None
+    finally:
+        cursor.close()
+        conn.close()
 
 def store_tokens(user_id: str, token_data: dict, scopes: list):
     """Store or update tokens for a user"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    encrypted_access = encrypt_token({"token": token_data.get("access_token")})
-    encrypted_refresh = encrypt_token({"token": token_data.get("refresh_token")})
-    
-    expires_in = token_data.get("expires_in", 3600)
-    token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
-    
-    scopes_str = " ".join(scopes)
-    
-    cursor.execute("SELECT user_id FROM tokens WHERE user_id = ?", (user_id,))
-    exists = cursor.fetchone()
-    
-    if exists:
-        cursor.execute("""
-            UPDATE tokens
-            SET access_token = ?, refresh_token = ?, token_expiry = ?, scopes = ?, updated_at = ?
-            WHERE user_id = ?
-        """, (encrypted_access, encrypted_refresh, token_expiry, scopes_str, datetime.utcnow(), user_id))
-    else:
-        cursor.execute("""
-            INSERT INTO tokens (user_id, access_token, refresh_token, token_expiry, scopes, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, encrypted_access, encrypted_refresh, token_expiry, scopes_str, datetime.utcnow()))
-    
-    conn.commit()
-    conn.close()
+    try:
+        encrypted_access = encrypt_token({"token": token_data.get("access_token")})
+        encrypted_refresh = encrypt_token({"token": token_data.get("refresh_token")})
+        
+        expires_in = token_data.get("expires_in", 3600)
+        token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+        
+        scopes_str = " ".join(scopes)
+        
+        cursor.execute("SELECT user_id FROM tokens WHERE user_id = ?", (user_id,))
+        exists = cursor.fetchone()
+        
+        if exists:
+            cursor.execute("""
+                UPDATE tokens
+                SET access_token = ?, refresh_token = ?, token_expiry = ?, scopes = ?, updated_at = ?
+                WHERE user_id = ?
+            """, (encrypted_access, encrypted_refresh, token_expiry, scopes_str, datetime.utcnow(), user_id))
+        else:
+            cursor.execute("""
+                INSERT INTO tokens (user_id, access_token, refresh_token, token_expiry, scopes, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (user_id, encrypted_access, encrypted_refresh, token_expiry, scopes_str, datetime.utcnow()))
+        
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
 
 def get_user_tokens(user_id: str) -> Optional[dict]:
     """Get decrypted tokens for a user"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
-        SELECT access_token, refresh_token, token_expiry, scopes
-        FROM tokens
-        WHERE user_id = ?
-    """, (user_id,))
-    
-    row = cursor.fetchone()
-    conn.close()
-    
-    if row:
-        access_token_data = decrypt_token(row[0])
-        refresh_token_data = decrypt_token(row[1])
+    try:
+        cursor.execute("""
+            SELECT access_token, refresh_token, token_expiry, scopes
+            FROM tokens
+            WHERE user_id = ?
+        """, (user_id,))
         
-        return {
-            "access_token": access_token_data.get("token"),
-            "refresh_token": refresh_token_data.get("token"),
-            "token_expiry": row[2],
-            "scopes": row[3].split()
-        }
-    return None
+        row = cursor.fetchone()
+        
+        if row:
+            access_token_data = decrypt_token(row[0])
+            refresh_token_data = decrypt_token(row[1])
+            
+            return {
+                "access_token": access_token_data.get("token"),
+                "refresh_token": refresh_token_data.get("token"),
+                "token_expiry": row[2],
+                "scopes": row[3].split()
+            }
+        return None
+    finally:
+        cursor.close()
+        conn.close()
 
 def create_session(user_id: str, ip_address: str, user_agent: str) -> str:
     """Create a new session and return session token"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    session_token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(days=30)
-    
-    cursor.execute("""
-        INSERT INTO sessions (session_token, user_id, created_at, expires_at, ip_address, user_agent)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (session_token, user_id, datetime.utcnow(), expires_at, ip_address, user_agent))
-    
-    conn.commit()
-    conn.close()
-    
-    return session_token
+    try:
+        session_token = secrets.token_urlsafe(32)
+        expires_at = datetime.utcnow() + timedelta(days=30)
+        
+        cursor.execute("""
+            INSERT INTO sessions (session_token, user_id, created_at, expires_at, ip_address, user_agent)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (session_token, user_id, datetime.utcnow(), expires_at, ip_address, user_agent))
+        
+        conn.commit()
+        return session_token
+    finally:
+        cursor.close()
+        conn.close()
 
 def get_user_from_session(session_token: str) -> Optional[str]:
     """Get user_id from session token if valid"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
-        SELECT user_id FROM sessions
-        WHERE session_token = ? AND expires_at > ?
-    """, (session_token, datetime.utcnow()))
-    
-    row = cursor.fetchone()
-    conn.close()
-    
-    return row[0] if row else None
+    try:
+        cursor.execute("""
+            SELECT user_id FROM sessions
+            WHERE session_token = ? AND expires_at > ?
+        """, (session_token, datetime.utcnow()))
+        
+        row = cursor.fetchone()
+        return row[0] if row else None
+    finally:
+        cursor.close()
+        conn.close()
 
 def log_action(user_id: str, action: str, success: bool, source: str, details: str, ip_address: str = "N/A"):
     """Log an action to the audit_logs table"""
@@ -262,17 +270,23 @@ def log_action(user_id: str, action: str, success: bool, source: str, details: s
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Truncate details if too long
-        if len(details) > 1024:
-            details = details[:1021] + "..."
+        try:
+            # Truncate details if too long
+            if len(details) > 1024:
+                details = details[:1021] + "..."
             
-        cursor.execute("""
-            INSERT INTO audit_logs (user_id, action, timestamp, success, ip_address, source, details)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, action, datetime.utcnow(), success, ip_address, source, details))
-        
-        conn.commit()
-        conn.close()
+            # Convert boolean to int for SQL Server
+            success_int = 1 if success else 0
+                
+            cursor.execute("""
+                INSERT INTO audit_logs (user_id, action, timestamp, success, ip_address, source, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, action, datetime.utcnow(), success_int, ip_address, source, details))
+            
+            conn.commit()
+        finally:
+            cursor.close()
+            conn.close()
     except Exception as e:
         print(f"Failed to log action: {e}")
 
@@ -280,9 +294,13 @@ def update_last_login(user_id: str):
     """Update user's last login timestamp"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET last_login = ? WHERE user_id = ?", (datetime.utcnow(), user_id))
-    conn.commit()
-    conn.close()
+    
+    try:
+        cursor.execute("UPDATE users SET last_login = ? WHERE user_id = ?", (datetime.utcnow(), user_id))
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
 
 # Authentication helper
 async def verify_api_key(api_key: Optional[str]) -> Optional[str]:
@@ -1688,7 +1706,7 @@ async def get_auth_status(api_key: str) -> dict:
 
 # --- STARLETTE APP & OAUTH ENDPOINTS ---
 
-# mcp_asgi = mcp.build_asgi_app()
+mcp_asgi = mcp.build_asgi_app()
 
 async def start_auth(request: StarletteRequest):
     """Start the Google OAuth2 flow"""
@@ -1847,5 +1865,5 @@ app = Starlette(
         Route("/health", health),
         Mount("/mcp", mcp),  # ← Fixed: no .build_asgi_app(), mounted on /mcp
     ],
-    #lifespan=mcp.lifespan,
+    lifespan=mcp.lifespan,
 )
