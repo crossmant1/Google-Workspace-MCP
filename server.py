@@ -1847,5 +1847,5 @@ app = Starlette(
         Route("/health", health),
         Mount("/mcp", mcp),  # ← Fixed: no .build_asgi_app(), mounted on /mcp
     ],
-    lifespan=mcp.lifespan,
+    #lifespan=mcp.lifespan,
 )
