@@ -1706,7 +1706,7 @@ async def get_auth_status(api_key: str) -> dict:
 
 # --- STARLETTE APP & OAUTH ENDPOINTS ---
 
-mcp_asgi = mcp.build_asgi_app()
+#mcp_asgi = mcp.build_asgi_app()
 
 async def start_auth(request: StarletteRequest):
     """Start the Google OAuth2 flow"""
