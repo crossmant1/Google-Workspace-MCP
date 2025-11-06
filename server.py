@@ -1706,6 +1706,9 @@ async def get_auth_status(api_key: str) -> dict:
 
 # --- STARLETTE APP & OAUTH ENDPOINTS ---
 
+# Create the MCP ASGI app with http_app() method
+mcp_asgi = mcp.http_app(path='/mcp')
+
 async def start_auth(request: StarletteRequest):
     """Start the Google OAuth2 flow"""
     from google_auth_oauthlib.flow import Flow
@@ -1728,8 +1731,6 @@ async def start_auth(request: StarletteRequest):
         prompt="consent"
     )
     
-    # Store state in session (if using sessions) or pass it
-    # For simplicity, we'll just redirect
     return StarletteJSONResponse({"auth_url": auth_url})
 
 async def oauth_callback(request: StarletteRequest):
@@ -1782,7 +1783,7 @@ async def oauth_callback(request: StarletteRequest):
         user = get_user_by_email(email)
         if user:
             user_id = user["user_id"]
-            api_key = "REUSED" # We don't return the key on re-auth
+            api_key = "REUSED"
         else:
             user_id, api_key = create_user(email, display_name)
         
@@ -1792,7 +1793,7 @@ async def oauth_callback(request: StarletteRequest):
         # Update last login
         update_last_login(user_id)
         
-        # Create a session for the browser (optional, but good for web UIs)
+        # Create a session for the browser
         session_token = create_session(
             user_id, 
             request.client.host, 
@@ -1854,14 +1855,14 @@ async def root(request: StarletteRequest):
         }
     })
 
-# Create main app
+# Create main app using Starlette
 app = Starlette(
     routes=[
         Route("/", root),
         Route("/auth", start_auth),
         Route("/oauth2callback", oauth_callback),
         Route("/health", health),
-        Mount("/mcp", app=mcp),  # ← Mount mcp directly, it IS an ASGI app
+        Mount("/", mcp_asgi),  # Mount MCP at root - it handles /mcp/ path itself
     ],
-    lifespan=mcp.lifespan,
+    lifespan=mcp_asgi.lifespan,  # CRITICAL: Use mcp_asgi's lifespan
 )
