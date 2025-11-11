@@ -41,6 +41,12 @@ AZURE_SQL_DATABASE = os.getenv("AZURE_SQL_DATABASE")
 AZURE_SQL_USERNAME = os.getenv("AZURE_SQL_USERNAME")
 AZURE_SQL_PASSWORD = os.getenv("AZURE_SQL_PASSWORD")
 
+if not all([CLIENT_ID, CLIENT_SECRET, REDIRECT_URI]):
+    raise RuntimeError("Missing required OAuth environment variables: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or GOOGLE_REDIRECT_URI")
+
+if not all([AZURE_SQL_SERVER, AZURE_SQL_DATABASE, AZURE_SQL_USERNAME, AZURE_SQL_PASSWORD]):
+    raise RuntimeError("Missing required Azure SQL environment variables")
+
 # Encryption key for tokens
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 if not ENCRYPTION_KEY:
@@ -1472,31 +1478,15 @@ async def create_task(
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def create_task_from_email(
-    api_key: str,
-    email_id: str,
-    task_list_id: str = "@default",
-    include_snippet: bool = True,
-    include_sender: bool = True,
-    mark_email_done: bool = False
-) -> dict:
-    """Create a Google Task from a Gmail email (mimics Gmail's 'Add to Tasks' button)
-    
-    Args:
-        api_key: User's API key for authentication
-        email_id: The Gmail message ID to create a task from (required)
-        task_list_id: The task list ID (default: "@default" for default list)
-        include_snippet: Include email preview in task notes (default: True)
-        include_sender: Include sender info in task notes (default: True)
-        mark_email_done: Mark the email as read after creating task (default: False)
-    """
+async def create_task_from_email(api_key: str, email_id: str, task_list_id: str = "@default", include_snippet: bool = True, include_sender: bool = True, mark_email_done: bool = False) -> dict:
+    """Create a Google Task from a Gmail email (mimics Gmail's 'Add to Tasks' button)"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
 
     try:
         from googleapiclient.discovery import build
-        from googleapiclient.errors import HttpError
+        # HttpError already imported at top - Fix #1
 
         creds = _get_credentials(user_id)
         gmail_service = build("gmail", "v1", credentials=creds)
