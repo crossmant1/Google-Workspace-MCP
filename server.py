@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP
@@ -11,7 +10,7 @@ import asyncio
 from typing import Dict, Optional
 import secrets
 from datetime import datetime, timedelta
-import pyodbc  # <--- Changed from pymssql
+import pyodbc
 from cryptography.fernet import Fernet
 import hashlib
 import json
@@ -19,33 +18,47 @@ import base64
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from googleapiclient.errors import HttpError
-
-
-# For Starlette app
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse as StarletteJSONResponse
 from starlette.routing import Route, Mount
 from starlette.requests import Request as StarletteRequest
 import urllib.parse
+import html
+import re
+from functools import lru_cache
+from contextlib import asynccontextmanager
 
 load_dotenv()
 
-# Environment variables
+# Environment variables with validation
 CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
-
-# Azure SQL Database connection
 AZURE_SQL_SERVER = os.getenv("AZURE_SQL_SERVER")
 AZURE_SQL_DATABASE = os.getenv("AZURE_SQL_DATABASE")
 AZURE_SQL_USERNAME = os.getenv("AZURE_SQL_USERNAME")
 AZURE_SQL_PASSWORD = os.getenv("AZURE_SQL_PASSWORD")
+DEFAULT_TIMEZONE = os.getenv("DEFAULT_TIMEZONE", "America/New_York")
 
-if not all([CLIENT_ID, CLIENT_SECRET, REDIRECT_URI]):
-    raise RuntimeError("Missing required OAuth environment variables: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or GOOGLE_REDIRECT_URI")
+# Validate all required environment variables at startup
+missing_vars = []
+if not CLIENT_ID:
+    missing_vars.append("GOOGLE_CLIENT_ID")
+if not CLIENT_SECRET:
+    missing_vars.append("GOOGLE_CLIENT_SECRET")
+if not REDIRECT_URI:
+    missing_vars.append("GOOGLE_REDIRECT_URI")
+if not AZURE_SQL_SERVER:
+    missing_vars.append("AZURE_SQL_SERVER")
+if not AZURE_SQL_DATABASE:
+    missing_vars.append("AZURE_SQL_DATABASE")
+if not AZURE_SQL_USERNAME:
+    missing_vars.append("AZURE_SQL_USERNAME")
+if not AZURE_SQL_PASSWORD:
+    missing_vars.append("AZURE_SQL_PASSWORD")
 
-if not all([AZURE_SQL_SERVER, AZURE_SQL_DATABASE, AZURE_SQL_USERNAME, AZURE_SQL_PASSWORD]):
-    raise RuntimeError("Missing required Azure SQL environment variables")
+if missing_vars:
+    raise RuntimeError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
 # Encryption key for tokens
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
@@ -68,19 +81,47 @@ SCOPES = [
     "https://www.googleapis.com/auth/tasks"
 ]
 
-# Database connection
+# Connection pool management
+connection_pool = []
+MAX_POOL_SIZE = 10
+
 def get_db_connection():
-    """Create a connection to Azure SQL Database using pyodbc"""
-    # Clean server name
-    server = AZURE_SQL_SERVER.replace('.database.windows.net', '').replace('tcp:', '')
+    """Create a connection to Azure SQL Database using pyodbc with connection pooling"""
+    # Try to reuse existing connection from pool
+    while connection_pool:
+        conn = connection_pool.pop()
+        try:
+            # Test if connection is still alive
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            return conn
+        except:
+            # Connection is dead, try next one
+            try:
+                conn.close()
+            except:
+                pass
+    
+    # No valid connections in pool, create new one
+    # Handle various server name formats
+    server = AZURE_SQL_SERVER
+    if not server.endswith('.database.windows.net'):
+        if server.startswith('tcp:'):
+            server = server.replace('tcp:', '')
+        if not server.endswith('.database.windows.net'):
+            server = f"{server}.database.windows.net"
+    else:
+        server = server.replace('tcp:', '')
     
     # Try multiple drivers in order of preference
     drivers = ["{ODBC Driver 18 for SQL Server}", "{ODBC Driver 17 for SQL Server}"]
     
+    last_error = None
     for driver in drivers:
         conn_str = (
             f"DRIVER={driver};"
-            f"SERVER={server}.database.windows.net;"
+            f"SERVER={server};"
             f"DATABASE={AZURE_SQL_DATABASE};"
             f"UID={AZURE_SQL_USERNAME};"
             f"PWD={AZURE_SQL_PASSWORD};"
@@ -93,11 +134,25 @@ def get_db_connection():
             conn = pyodbc.connect(conn_str)
             return conn
         except pyodbc.Error as e:
+            last_error = e
             if driver == drivers[-1]:  # Last driver attempt
                 print(f"Database connection failed with all drivers. Last error: {e}")
                 raise
             # Try next driver
             continue
+    
+    if last_error:
+        raise last_error
+
+def return_connection(conn):
+    """Return a connection to the pool"""
+    if len(connection_pool) < MAX_POOL_SIZE:
+        connection_pool.append(conn)
+    else:
+        try:
+            conn.close()
+        except:
+            pass
 
 # Security helper functions
 def encrypt_token(token_data: dict) -> str:
@@ -115,7 +170,14 @@ def hash_api_key(api_key: str) -> str:
     """Hash API key for storage"""
     return hashlib.sha256(api_key.encode()).hexdigest()
 
-# Database operations
+# Sanitization helpers
+def sanitize_drive_query(query: str) -> str:
+    """Safely escape Drive API query - NO SQL involved, just Drive API query syntax"""
+    # For Drive API, we need to escape single quotes by doubling them
+    # This is NOT SQL injection - it's Drive API's query language
+    return query.replace("'", "''")
+
+# Database operations with connection pooling
 def create_user(email: str, display_name: str) -> tuple:
     """Create a new user and return user_id and api_key"""
     conn = get_db_connection()
@@ -135,8 +197,8 @@ def create_user(email: str, display_name: str) -> tuple:
         return user_id, api_key
     finally:
         cursor.close()
-        conn.close()
-        
+        return_connection(conn)
+
 def get_user_by_email(email: str) -> Optional[dict]:
     """Get user by email"""
     conn = get_db_connection()
@@ -156,7 +218,7 @@ def get_user_by_email(email: str) -> Optional[dict]:
         return None
     finally:
         cursor.close()
-        conn.close()
+        return_connection(conn)
 
 def get_user_by_api_key(api_key: str) -> Optional[str]:
     """Get user_id by API key"""
@@ -171,7 +233,7 @@ def get_user_by_api_key(api_key: str) -> Optional[str]:
         return row[0] if row else None
     finally:
         cursor.close()
-        conn.close()
+        return_connection(conn)
 
 def store_tokens(user_id: str, token_data: dict, scopes: list):
     """Store or update tokens for a user"""
@@ -205,7 +267,7 @@ def store_tokens(user_id: str, token_data: dict, scopes: list):
         conn.commit()
     finally:
         cursor.close()
-        conn.close()
+        return_connection(conn)
 
 def get_user_tokens(user_id: str) -> Optional[dict]:
     """Get decrypted tokens for a user"""
@@ -234,7 +296,7 @@ def get_user_tokens(user_id: str) -> Optional[dict]:
         return None
     finally:
         cursor.close()
-        conn.close()
+        return_connection(conn)
 
 def create_session(user_id: str, ip_address: str, user_agent: str) -> str:
     """Create a new session and return session token"""
@@ -254,7 +316,7 @@ def create_session(user_id: str, ip_address: str, user_agent: str) -> str:
         return session_token
     finally:
         cursor.close()
-        conn.close()
+        return_connection(conn)
 
 def get_user_from_session(session_token: str) -> Optional[str]:
     """Get user_id from session token if valid"""
@@ -271,7 +333,7 @@ def get_user_from_session(session_token: str) -> Optional[str]:
         return row[0] if row else None
     finally:
         cursor.close()
-        conn.close()
+        return_connection(conn)
 
 def log_action(user_id: str, action: str, success: bool, source: str, details: str, ip_address: str = "N/A"):
     """Log an action to the audit_logs table"""
@@ -286,16 +348,19 @@ def log_action(user_id: str, action: str, success: bool, source: str, details: s
             
             # Convert boolean to int for SQL Server
             success_int = 1 if success else 0
+            
+            # Ensure datetime is UTC
+            timestamp = datetime.utcnow()
                 
             cursor.execute("""
                 INSERT INTO audit_logs (user_id, action, timestamp, success, ip_address, source, details)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, action, datetime.utcnow(), success_int, ip_address, source, details))
+            """, (user_id, action, timestamp, success_int, ip_address, source, details))
             
             conn.commit()
         finally:
             cursor.close()
-            conn.close()
+            return_connection(conn)
     except Exception as e:
         print(f"Failed to log action: {e}")
 
@@ -309,7 +374,7 @@ def update_last_login(user_id: str):
         conn.commit()
     finally:
         cursor.close()
-        conn.close()
+        return_connection(conn)
 
 # Authentication helper
 async def verify_api_key(api_key: Optional[str]) -> Optional[str]:
@@ -318,16 +383,16 @@ async def verify_api_key(api_key: Optional[str]) -> Optional[str]:
         return None
     return get_user_by_api_key(api_key)
 
-# Credentials helper
+# Credentials helper with automatic token refresh
 def _get_credentials(user_id: str):
-    """Helper to create Google credentials from user's stored token"""
+    """Helper to create Google credentials from user's stored token with auto-refresh"""
     from google.oauth2.credentials import Credentials
     
     token_data = get_user_tokens(user_id)
     if not token_data:
         return None
     
-    return Credentials(
+    creds = Credentials(
         token=token_data.get("access_token"),
         refresh_token=token_data.get("refresh_token"),
         token_uri="https://oauth2.googleapis.com/token",
@@ -335,6 +400,23 @@ def _get_credentials(user_id: str):
         client_secret=CLIENT_SECRET,
         scopes=token_data.get("scopes", SCOPES),
     )
+    
+    # Check if token needs refresh
+    if creds.expired and creds.refresh_token:
+        from google.auth.transport.requests import Request
+        try:
+            creds.refresh(Request())
+            # Store refreshed token
+            new_token_data = {
+                "access_token": creds.token,
+                "refresh_token": creds.refresh_token,
+                "expires_in": (creds.expiry - datetime.utcnow()).total_seconds() if creds.expiry else 3600
+            }
+            store_tokens(user_id, new_token_data, creds.scopes)
+        except Exception as e:
+            print(f"Token refresh failed for user {user_id}: {e}")
+    
+    return creds
 
 # --- MCP SETUP ---
 mcp = FastMCP("Google Drive, Gmail, Calendar & Tasks MCP")
@@ -445,12 +527,7 @@ async def _read_file_content_helper(user_id: str, file_id: str) -> dict:
 
 @mcp.tool()
 async def list_drive_files(api_key: str, max_results: int = 20) -> dict:
-    """List files from Google Drive
-    
-    Args:
-        api_key: User's API key for authentication
-        max_results: Maximum number of files to return (default: 20, max: 100)
-    """
+    """List files from Google Drive"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -481,13 +558,7 @@ async def list_drive_files(api_key: str, max_results: int = 20) -> dict:
 
 @mcp.tool()
 async def search_drive_files(api_key: str, query: str, max_results: int = 10) -> dict:
-    """Search for files in Google Drive by name
-    
-    Args:
-        api_key: User's API key for authentication
-        query: Search query (file name to search for)
-        max_results: Maximum number of results to return (default: 10)
-    """
+    """Search for files in Google Drive by name"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -498,7 +569,8 @@ async def search_drive_files(api_key: str, query: str, max_results: int = 10) ->
         creds = _get_credentials(user_id)
         service = build("drive", "v3", credentials=creds)
         
-        safe_query = query.replace("'", "\\'")
+        # Use proper Drive API query escaping
+        safe_query = sanitize_drive_query(query)
         res = service.files().list(
             q=f"name contains '{safe_query}'",
             pageSize=min(max_results, 100),
@@ -520,12 +592,7 @@ async def search_drive_files(api_key: str, query: str, max_results: int = 10) ->
 
 @mcp.tool()
 async def read_file_by_name(api_key: str, file_name: str) -> dict:
-    """Read the contents of a file from Google Drive by searching for its name
-    
-    Args:
-        api_key: User's API key for authentication
-        file_name: The name of the file to search for and read
-    """
+    """Read the contents of a file from Google Drive by searching for its name"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -536,7 +603,8 @@ async def read_file_by_name(api_key: str, file_name: str) -> dict:
         creds = _get_credentials(user_id)
         service = build("drive", "v3", credentials=creds)
         
-        safe_name = file_name.replace("'", "\\'")
+        # Use proper Drive API query escaping
+        safe_name = sanitize_drive_query(file_name)
         res = service.files().list(
             q=f"name = '{safe_name}'",
             pageSize=5,
@@ -569,12 +637,8 @@ async def read_file_by_name(api_key: str, file_name: str) -> dict:
 
 @mcp.tool()
 async def read_file_content(api_key: str, file_id: str) -> dict:
-    """Read the contents of a specific file from Google Drive
-    
-    Args:
-        api_key: User's API key for authentication
-        file_id: The Google Drive file ID to read
-    """
+    """Read the contents of a specific file from Google Drive"""
+    # Implementation unchanged
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -589,13 +653,8 @@ async def read_file_content(api_key: str, file_id: str) -> dict:
 
 @mcp.tool()
 async def update_document_content(api_key: str, file_id: str, new_content: str) -> dict:
-    """Update the contents of a Google Docs document
-    
-    Args:
-        api_key: User's API key for authentication
-        file_id: The Google Docs file ID to update
-        new_content: The new text content to write (replaces all existing content)
-    """
+    """Update the contents of a Google Docs document"""
+    # Implementation unchanged
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -670,13 +729,7 @@ async def update_document_content(api_key: str, file_id: str, new_content: str) 
 
 @mcp.tool()
 async def update_document_by_name(api_key: str, file_name: str, new_content: str) -> dict:
-    """Update the contents of a Google Docs document by searching for its name
-    
-    Args:
-        api_key: User's API key for authentication
-        file_name: The name of the document to search for and update
-        new_content: The new text content to write to the document
-    """
+    """Update the contents of a Google Docs document by searching for its name"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -687,7 +740,7 @@ async def update_document_by_name(api_key: str, file_name: str, new_content: str
         creds = _get_credentials(user_id)
         service = build("drive", "v3", credentials=creds)
         
-        safe_name = file_name.replace("'", "\\'")
+        safe_name = sanitize_drive_query(file_name)
         res = service.files().list(
             q=f"name = '{safe_name}' and mimeType = 'application/vnd.google-apps.document'",
             pageSize=5,
@@ -717,6 +770,34 @@ async def update_document_by_name(api_key: str, file_name: str, new_content: str
         return {"error": str(e), "user_id": user_id, "searched_for": file_name, "traceback": traceback.format_exc()}
 
 # --- GMAIL TOOLS ---
+
+def extract_email_body(payload):
+    """Extract email body with fallback to HTML if plain text not available"""
+    # Try to get plain text first
+    if payload.get("mimeType") == "text/plain":
+        body_data = payload.get("body", {}).get("data")
+        if body_data:
+            return base64.urlsafe_b64decode(body_data).decode("utf-8", errors="replace")
+    
+    # Try HTML if plain text not available
+    if payload.get("mimeType") == "text/html":
+        body_data = payload.get("body", {}).get("data")
+        if body_data:
+            html_content = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="replace")
+            # Strip HTML tags for better readability
+            text = re.sub('<[^<]+?>', '', html_content)
+            # Decode HTML entities
+            text = html.unescape(text)
+            return text
+    
+    # Recursively check parts for multipart messages
+    if "parts" in payload:
+        for part in payload["parts"]:
+            body = extract_email_body(part)
+            if body:
+                return body
+    
+    return None
 
 async def _list_emails_helper(user_id: str, query: Optional[str] = None, max_results: int = 20) -> dict:
     """Helper for list_emails and search_emails"""
@@ -780,12 +861,7 @@ async def _list_emails_helper(user_id: str, query: Optional[str] = None, max_res
 
 @mcp.tool()
 async def list_emails(api_key: str, max_results: int = 20) -> dict:
-    """List recent emails from Gmail
-    
-    Args:
-        api_key: User's API key for authentication
-        max_results: Maximum number of emails to return (default: 20)
-    """
+    """List recent emails from Gmail"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -799,13 +875,7 @@ async def list_emails(api_key: str, max_results: int = 20) -> dict:
 
 @mcp.tool()
 async def search_emails(api_key: str, query: str, max_results: int = 20) -> dict:
-    """Search for emails in Gmail
-    
-    Args:
-        api_key: User's API key for authentication
-        query: Gmail search query (e.g., "from:boss subject:report")
-        max_results: Maximum number of emails to return (default: 20)
-    """
+    """Search for emails in Gmail"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -819,12 +889,7 @@ async def search_emails(api_key: str, query: str, max_results: int = 20) -> dict
 
 @mcp.tool()
 async def read_email(api_key: str, email_id: str) -> dict:
-    """Read the full body of a specific email
-    
-    Args:
-        api_key: User's API key for authentication
-        email_id: The Gmail message ID
-    """
+    """Read the full body of a specific email"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -843,20 +908,8 @@ async def read_email(api_key: str, email_id: str) -> dict:
         
         headers = {h["name"]: h["value"] for h in message["payload"]["headers"]}
         
-        def get_body(payload):
-            if payload.get("mimeType") == "text/plain":
-                body = payload.get("body", {}).get("data")
-                if body:
-                    return base64.urlsafe_b64decode(body).decode("utf-8", errors="replace")
-            
-            if "parts" in payload:
-                for part in payload["parts"]:
-                    body = get_body(part)
-                    if body:
-                        return body
-            return None
-
-        body = get_body(message.get("payload", {}))
+        # Use improved body extraction with HTML fallback
+        body = extract_email_body(message.get("payload", {}))
         
         log_action(user_id, "read_email", True, "mcp_tool", f"Email: {email_id}")
         return {
@@ -886,16 +939,7 @@ async def send_email(
     cc: Optional[str] = None,
     bcc: Optional[str] = None
 ) -> dict:
-    """Send an email
-    
-    Args:
-        api_key: User's API key for authentication
-        to: Recipient email address
-        subject: Email subject line
-        body: Email body content
-        cc: CC recipients (optional)
-        bcc: BCC recipients (optional)
-    """
+    """Send an email"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -940,12 +984,7 @@ async def send_email(
 
 @mcp.tool()
 async def mark_email_as_read(api_key: str, email_id: str) -> dict:
-    """Mark an email as read (removes the UNREAD label)
-    
-    Args:
-        api_key: User's API key for authentication
-        email_id: The Gmail message ID to mark as read
-    """
+    """Mark an email as read (removes the UNREAD label)"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -975,12 +1014,7 @@ async def mark_email_as_read(api_key: str, email_id: str) -> dict:
 
 @mcp.tool()
 async def mark_email_as_unread(api_key: str, email_id: str) -> dict:
-    """Mark an email as unread (adds the UNREAD label)
-    
-    Args:
-        api_key: User's API key for authentication
-        email_id: The Gmail message ID to mark as unread
-    """
+    """Mark an email as unread (adds the UNREAD label)"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1015,27 +1049,22 @@ async def mark_email_as_unread(api_key: str, email_id: str) -> dict:
 async def list_calendar_events(
     api_key: str,
     max_results: int = 10,
-    calendar_id: str = "primary"
+    calendar_id: str = "primary",
+    timezone: str = None
 ) -> dict:
-    """List upcoming events from Google Calendar
-    
-    Args:
-        api_key: User's API key for authentication
-        max_results: Maximum number of events to return (default: 10)
-        calendar_id: Calendar identifier (default: "primary")
-    """
+    """List upcoming events from Google Calendar"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
 
     try:
         from googleapiclient.discovery import build
-        from datetime import datetime, timezone
+        from datetime import datetime, timezone as tz
 
         creds = _get_credentials(user_id)
         service = build("calendar", "v3", credentials=creds)
         
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(tz.utc).isoformat()
         
         events_result = service.events().list(
             calendarId=calendar_id,
@@ -1087,26 +1116,19 @@ async def create_calendar_event(
     description: str = "",
     location: str = "",
     attendees: str = "",
-    calendar_id: str = "primary"
+    calendar_id: str = "primary",
+    timezone: str = None
 ) -> dict:
-    """Create a new event in Google Calendar
-    
-    Args:
-        api_key: User's API key for authentication
-        summary: Event title (required)
-        start_time: Event start time in ISO 8601 format
-        end_time: Event end time in ISO 8601 format
-        description: Event description (optional)
-        location: Event location (optional)
-        attendees: Comma-separated list of attendee emails (optional)
-        calendar_id: Calendar identifier (default: "primary")
-    """
+    """Create a new event in Google Calendar"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
 
     try:
         from googleapiclient.discovery import build
+        
+        # Use provided timezone or default
+        tz = timezone or DEFAULT_TIMEZONE
         
         creds = _get_credentials(user_id)
         service = build("calendar", "v3", credentials=creds)
@@ -1119,12 +1141,12 @@ async def create_calendar_event(
         
         # Handle all-day vs. dateTime
         if "T" in start_time:
-            event["start"] = {"dateTime": start_time, "timeZone": "America/New_York"}
+            event["start"] = {"dateTime": start_time, "timeZone": tz}
         else:
             event["start"] = {"date": start_time}
             
         if "T" in end_time:
-            event["end"] = {"dateTime": end_time, "timeZone": "America/New_York"}
+            event["end"] = {"dateTime": end_time, "timeZone": tz}
         else:
             event["end"] = {"date": end_time}
             
@@ -1160,26 +1182,19 @@ async def update_calendar_event(
     end_time: str = "",
     description: str = "",
     location: str = "",
-    calendar_id: str = "primary"
+    calendar_id: str = "primary",
+    timezone: str = None
 ) -> dict:
-    """Update an existing event in Google Calendar
-    
-    Args:
-        api_key: User's API key for authentication
-        event_id: The event ID to update (required)
-        summary: New event title/summary (optional - leave empty to keep unchanged)
-        start_time: New start time in ISO 8601 format (optional)
-        end_time: New end time in ISO 8601 format (optional)
-        description: New event description (optional)
-        location: New event location (optional)
-        calendar_id: Calendar identifier (default: "primary")
-    """
+    """Update an existing event in Google Calendar"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
 
     try:
         from googleapiclient.discovery import build
+        
+        # Use provided timezone or default
+        tz = timezone or DEFAULT_TIMEZONE
         
         creds = _get_credentials(user_id)
         service = build("calendar", "v3", credentials=creds)
@@ -1195,13 +1210,13 @@ async def update_calendar_event(
             
         if start_time:
             if "T" in start_time:
-                event["start"] = {"dateTime": start_time, "timeZone": "America/New_York"}
+                event["start"] = {"dateTime": start_time, "timeZone": tz}
             else:
                 event["start"] = {"date": start_time}
         
         if end_time:
             if "T" in end_time:
-                event["end"] = {"dateTime": end_time, "timeZone": "America/New_York"}
+                event["end"] = {"dateTime": end_time, "timeZone": tz}
             else:
                 event["end"] = {"date": end_time}
         
@@ -1231,13 +1246,7 @@ async def delete_calendar_event(
     event_id: str,
     calendar_id: str = "primary"
 ) -> dict:
-    """Delete an event from Google Calendar
-    
-    Args:
-        api_key: User's API key for authentication
-        event_id: The event ID to delete
-        calendar_id: Calendar identifier (default: "primary")
-    """
+    """Delete an event from Google Calendar"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1271,14 +1280,7 @@ async def search_calendar_events(
     max_results: int = 10,
     calendar_id: str = "primary"
 ) -> dict:
-    """Search for calendar events matching a query
-    
-    Args:
-        api_key: User's API key for authentication
-        query: Search query (e.g., "team meeting")
-        max_results: Maximum number of events to return (default: 10)
-        calendar_id: Calendar identifier (default: "primary")
-    """
+    """Search for calendar events matching a query"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1333,11 +1335,7 @@ async def search_calendar_events(
 
 @mcp.tool()
 async def list_task_lists(api_key: str) -> dict:
-    """List all Google Tasks task lists
-    
-    Args:
-        api_key: User's API key for authentication
-    """
+    """List all Google Tasks task lists"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1373,13 +1371,7 @@ async def list_tasks(
     task_list_id: str = "@default",
     max_results: int = 20
 ) -> dict:
-    """List tasks from a specific Google Tasks list
-    
-    Args:
-        api_key: User's API key for authentication
-        task_list_id: The task list ID (default: "@default")
-        max_results: Maximum number of tasks to return (default: 20)
-    """
+    """List tasks from a specific Google Tasks list"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1429,15 +1421,7 @@ async def create_task(
     due: str = "",
     task_list_id: str = "@default"
 ) -> dict:
-    """Create a new task in Google Tasks
-    
-    Args:
-        api_key: User's API key for authentication
-        title: Task title (required)
-        notes: Task notes (optional)
-        due: Due date in RFC 3339 format (optional)
-        task_list_id: The task list ID (default: "@default")
-    """
+    """Create a new task in Google Tasks"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1486,7 +1470,6 @@ async def create_task_from_email(api_key: str, email_id: str, task_list_id: str 
 
     try:
         from googleapiclient.discovery import build
-        # HttpError already imported at top - Fix #1
 
         creds = _get_credentials(user_id)
         gmail_service = build("gmail", "v1", credentials=creds)
@@ -1609,14 +1592,7 @@ async def add_emails_to_tasks(
     task_list_id: str = "@default",
     mark_emails_done: bool = False
 ) -> dict:
-    """Create Google Tasks from multiple Gmail emails at once (bulk operation)
-    
-    Args:
-        api_key: User's API key for authentication
-        email_ids: Comma-separated list of Gmail message IDs (e.g., "id1,id2,id3")
-        task_list_id: The task list ID (default: "@default" for default list)
-        mark_emails_done: Mark the emails as read after creating tasks (default: False)
-    """
+    """Create Google Tasks from multiple Gmail emails at once (bulk operation)"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1676,15 +1652,7 @@ async def create_task_from_email_search(
     task_list_id: str = "@default",
     mark_emails_done: bool = False
 ) -> dict:
-    """Search for emails and create tasks from all matching results
-    
-    Args:
-        api_key: User's API key for authentication
-        search_query: Gmail search query (e.g., "is:unread from:boss@company.com")
-        max_emails: Maximum number of emails to convert to tasks (default: 5, max: 20)
-        task_list_id: The task list ID (default: "@default")
-        mark_emails_done: Mark emails as read after creating tasks (default: False)
-    """
+    """Search for emails and create tasks from all matching results"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1743,16 +1711,7 @@ async def update_task(
     due: str = "",
     task_list_id: str = "@default"
 ) -> dict:
-    """Update an existing task in Google Tasks
-    
-    Args:
-        api_key: User's API key for authentication
-        task_id: The task ID to update (required)
-        title: New task title (optional)
-        notes: New task notes (optional)
-        due: New due date in RFC 3339 format (optional)
-        task_list_id: The task list ID (default: "@default")
-    """
+    """Update an existing task in Google Tasks"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1798,13 +1757,7 @@ async def complete_task(
     task_id: str,
     task_list_id: str = "@default"
 ) -> dict:
-    """Mark a task as completed
-    
-    Args:
-        api_key: User's API key for authentication
-        task_id: The task ID to complete
-        task_list_id: The task list ID (default: "@default")
-    """
+    """Mark a task as completed"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1842,13 +1795,7 @@ async def delete_task(
     task_id: str,
     task_list_id: str = "@default"
 ) -> dict:
-    """Delete a task from Google Tasks
-    
-    Args:
-        api_key: User's API key for authentication
-        task_id: The task ID to delete
-        task_list_id: The task list ID (default: "@default")
-    """
+    """Delete a task from Google Tasks"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"error": "Invalid API key"}
@@ -1877,11 +1824,7 @@ async def delete_task(
 
 @mcp.tool()
 async def get_auth_status(api_key: str) -> dict:
-    """Check the authentication status and return user info
-    
-    Args:
-        api_key: User's API key for authentication
-    """
+    """Check the authentication status and return user info"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"authenticated": False, "error": "Invalid API key"}
@@ -1894,7 +1837,7 @@ async def get_auth_status(api_key: str) -> dict:
                 "error": "No tokens found for user"
             }
         
-        # Fix #3: Convert datetime to string for JSON serialization
+        # Convert datetime to string for JSON serialization
         token_expiry = token_data.get("token_expiry")
         expiry_str = token_expiry.isoformat() if token_expiry else None
         
@@ -2033,7 +1976,10 @@ async def health(request: StarletteRequest):
     """Health check endpoint, including DB connection"""
     try:
         conn = get_db_connection()
-        conn.close()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.close()
+        return_connection(conn)
         db_status = "connected"
     except Exception as e:
         db_status = f"disconnected: {e}"
