@@ -1885,27 +1885,31 @@ async def delete_task(
 
 @mcp.tool()
 async def get_auth_status(api_key: str) -> dict:
-    """Check the authentication status and return user info
-    
-    Args:
-        api_key: User's API key for authentication
-    """
+    """Check the authentication status and return user info"""
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"authenticated": False, "error": "Invalid API key"}
-        
-    user_info = get_user_by_email(get_user_tokens(user_id).get("email", ""))
-    if not user_info:
-        # Fallback if email not in token (shouldn't happen)
-        user_tokens = get_user_tokens(user_id)
     
-    return {
-        "authenticated": True,
-        "user_id": user_id,
-        "scopes": get_user_tokens(user_id).get("scopes", []),
-        "token_expiry": get_user_tokens(user_id).get("token_expiry")
-    }
-
+    try:
+        token_data = get_user_tokens(user_id)
+        if not token_data:
+            return {"authenticated": False, "error": "No tokens found for user"}
+        
+        # Convert datetime to string for JSON serialization
+        token_expiry = token_data.get("token_expiry")
+        expiry_str = token_expiry.isoformat() if token_expiry else None
+        
+        return {
+            "authenticated": True,
+            "user_id": user_id,
+            "scopes": token_data.get("scopes", []),
+            "token_expiry": expiry_str
+        }
+    except Exception as e:
+        return {
+            "authenticated": False,
+            "error": f"Error retrieving auth status: {str(e)}"
+        }
 
 # --- STARLETTE APP & OAUTH ENDPOINTS ---
 
