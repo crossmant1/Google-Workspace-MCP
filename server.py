@@ -1877,7 +1877,11 @@ async def delete_task(
 
 @mcp.tool()
 async def get_auth_status(api_key: str) -> dict:
-    """Check the authentication status and return user info"""
+    """Check the authentication status and return user info
+    
+    Args:
+        api_key: User's API key for authentication
+    """
     user_id = await verify_api_key(api_key)
     if not user_id:
         return {"authenticated": False, "error": "Invalid API key"}
@@ -1885,9 +1889,12 @@ async def get_auth_status(api_key: str) -> dict:
     try:
         token_data = get_user_tokens(user_id)
         if not token_data:
-            return {"authenticated": False, "error": "No tokens found for user"}
+            return {
+                "authenticated": False,
+                "error": "No tokens found for user"
+            }
         
-        # Convert datetime to string for JSON serialization
+        # Fix #3: Convert datetime to string for JSON serialization
         token_expiry = token_data.get("token_expiry")
         expiry_str = token_expiry.isoformat() if token_expiry else None
         
@@ -1898,11 +1905,12 @@ async def get_auth_status(api_key: str) -> dict:
             "token_expiry": expiry_str
         }
     except Exception as e:
+        log_action(user_id, "get_auth_status", False, "mcp_tool", str(e))
         return {
             "authenticated": False,
             "error": f"Error retrieving auth status: {str(e)}"
         }
-
+        
 # --- STARLETTE APP & OAUTH ENDPOINTS ---
 
 # Create the MCP ASGI app with http_app() method
