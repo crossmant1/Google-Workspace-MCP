@@ -40,7 +40,7 @@ AZURE_SQL_USERNAME = os.getenv("AZURE_SQL_USERNAME")
 AZURE_SQL_PASSWORD = os.getenv("AZURE_SQL_PASSWORD")
 DEFAULT_TIMEZONE = os.getenv("DEFAULT_TIMEZONE", "America/New_York")
 
-# Validate all required environment variables at startup
+# Validate all required environment variables individually at startup
 missing_vars = []
 if not CLIENT_ID:
     missing_vars.append("GOOGLE_CLIENT_ID")
