@@ -1882,6 +1882,72 @@ async def start_auth(request: StarletteRequest):
     )
     
     return StarletteJSONResponse({"auth_url": auth_url})
+    
+async def auth_page(request: StarletteRequest):
+    """HTML page to initiate OAuth flow"""
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Google OAuth Authentication</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 600px;
+                margin: 50px auto;
+                padding: 20px;
+            }
+            button {
+                background-color: #4285f4;
+                color: white;
+                padding: 12px 24px;
+                border: none;
+                border-radius: 4px;
+                font-size: 16px;
+                cursor: pointer;
+            }
+            button:hover {
+                background-color: #357ae8;
+            }
+            .info {
+                background-color: #f0f0f0;
+                padding: 15px;
+                border-radius: 4px;
+                margin-top: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Google OAuth Authentication</h1>
+        <p>Click the button below to authenticate with Google:</p>
+        <button onclick="startAuth()">Authenticate with Google</button>
+        
+        <div class="info">
+            <h3>What happens next:</h3>
+            <ol>
+                <li>You'll be redirected to Google to sign in</li>
+                <li>Grant permissions to the application</li>
+                <li>You'll be redirected back with your API key</li>
+                <li>Save your API key - it won't be shown again!</li>
+            </ol>
+        </div>
+        
+        <script>
+            async function startAuth() {
+                try {
+                    const response = await fetch('/auth');
+                    const data = await response.json();
+                    window.location.href = data.auth_url;
+                } catch (error) {
+                    alert('Error starting authentication: ' + error);
+                }
+            }
+        </script>
+    </body>
+    </html>
+    """
+    from starlette.responses import HTMLResponse
+    return HTMLResponse(content=html_content)
 
 async def oauth_callback(request: StarletteRequest):
     """Handle the OAuth2 callback from Google"""
@@ -2019,6 +2085,7 @@ async def root(request: StarletteRequest):
 app = Starlette(
     routes=[
         Route("/", root),
+        Route("/start-auth", auth_page),
         Route("/auth", start_auth),
         Route("/oauth2callback", oauth_callback),
         Route("/health", health),
