@@ -113,14 +113,11 @@ def get_db_connection():
             server = f"{server}.database.windows.net"
     else:
         server = server.replace('tcp:', '')
-    
-    # Try multiple drivers in order of preference
-    drivers = ["{ODBC Driver 18 for SQL Server}", "{ODBC Driver 17 for SQL Server}"]
-    
+        
     last_error = None
     for driver in drivers:
         conn_str = (
-            f"DRIVER={driver};"
+            f"DRIVER={{ODBC Driver 18 for SQL Server}};"
             f"SERVER={server};"
             f"DATABASE={AZURE_SQL_DATABASE};"
             f"UID={AZURE_SQL_USERNAME};"
@@ -134,12 +131,8 @@ def get_db_connection():
             conn = pyodbc.connect(conn_str)
             return conn
         except pyodbc.Error as e:
-            last_error = e
-            if driver == drivers[-1]:  # Last driver attempt
-                print(f"Database connection failed with all drivers. Last error: {e}")
-                raise
-            # Try next driver
-            continue
+            print(f"Database connection failed : {e}")
+            raise
     
     if last_error:
         raise last_error
