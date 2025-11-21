@@ -1952,7 +1952,7 @@ async def auth_page(request: StarletteRequest):
 async def oauth_callback(request: StarletteRequest):
     """Handle the OAuth2 callback from Google"""
     from google_auth_oauthlib.flow import Flow
-    from googleapiclient.discovery import build
+    import jwt  # You may need to: pip install PyJWT
 
     code = request.query_params.get("code")
     if not code:
@@ -1985,17 +1985,27 @@ async def oauth_callback(request: StarletteRequest):
             "expires_in": (creds.expiry - datetime.utcnow()).total_seconds()
         }
 
-        # Get user info to create user
-        service = build("oauth2", "v2", credentials=creds)
-        user_info = service.userinfo().get().execute()
+        # CHANGED: Get user info from ID token instead of API call
+        id_token = creds.id_token
+        if not id_token:
+            return StarletteJSONResponse(
+                {"error": "No ID token received from Google"}, 
+                status_code=500
+            )
+        
+        # Decode the ID token (no verification needed since it came directly from Google)
+        user_info = jwt.decode(id_token, options={"verify_signature": False})
         
         email = user_info.get("email")
-        display_name = user_info.get("name")
+        display_name = user_info.get("name", email)  # Fallback to email if no name
         
         if not email:
-            return StarletteJSONResponse({"error": "Could not retrieve email from Google"}, status_code=500)
+            return StarletteJSONResponse(
+                {"error": "Could not retrieve email from ID token"}, 
+                status_code=500
+            )
 
-        # Check if user exists, or create new one
+        # Rest of your code remains the same...
         user = get_user_by_email(email)
         if user:
             user_id = user["user_id"]
@@ -2003,13 +2013,9 @@ async def oauth_callback(request: StarletteRequest):
         else:
             user_id, api_key = create_user(email, display_name)
         
-        # Store the new tokens
         store_tokens(user_id, token_data, SCOPES)
-        
-        # Update last login
         update_last_login(user_id)
         
-        # Create a session for the browser
         session_token = create_session(
             user_id, 
             request.client.host, 
