@@ -9,6 +9,7 @@ fastmcp>=0.1.5
 # Configuration
 python-dotenv>=1.0.0
 pydantic>=2.4.0
+PyJWT
 
 # HTTP Requests
 requests>=2.31.0
