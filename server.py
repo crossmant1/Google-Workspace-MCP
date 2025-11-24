@@ -116,39 +116,25 @@ def get_db_connection():
             server = f"{server}.database.windows.net"
     else:
         server = server.replace('tcp:', '')
-        
-    last_error = None
-    for driver in drivers:
-        conn_str = (
-            f"DRIVER={{ODBC Driver 18 for SQL Server}};"
-            f"SERVER={server};"
-            f"DATABASE={AZURE_SQL_DATABASE};"
-            f"UID={AZURE_SQL_USERNAME};"
-            f"PWD={AZURE_SQL_PASSWORD};"
-            "Encrypt=yes;"
-            "TrustServerCertificate=no;"
-            "Connection Timeout=30;"
-        )
-        
-        try:
-            conn = pyodbc.connect(conn_str)
-            return conn
-        except pyodbc.Error as e:
-            print(f"Database connection failed : {e}")
-            raise
     
-    if last_error:
-        raise last_error
-
-def return_connection(conn):
-    """Return a connection to the pool"""
-    if len(connection_pool) < MAX_POOL_SIZE:
-        connection_pool.append(conn)
-    else:
-        try:
-            conn.close()
-        except:
-            pass
+    # Connection string for ODBC Driver 18
+    conn_str = (
+        f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+        f"SERVER={server};"
+        f"DATABASE={AZURE_SQL_DATABASE};"
+        f"UID={AZURE_SQL_USERNAME};"
+        f"PWD={AZURE_SQL_PASSWORD};"
+        "Encrypt=yes;"
+        "TrustServerCertificate=no;"
+        "Connection Timeout=30;"
+    )
+    
+    try:
+        conn = pyodbc.connect(conn_str)
+        return conn
+    except pyodbc.Error as e:
+        print(f"Database connection failed: {e}")
+        raise
 
 # Security helper functions
 def encrypt_token(token_data: dict) -> str:
