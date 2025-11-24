@@ -71,6 +71,9 @@ else:
 cipher_suite = Fernet(ENCRYPTION_KEY)
 
 SCOPES = [
+    "openid",  # REQUIRED for ID token
+    "https://www.googleapis.com/auth/userinfo.email",  # REQUIRED for email in ID token
+    "https://www.googleapis.com/auth/userinfo.profile",  # REQUIRED for name in ID token
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/gmail.readonly",
