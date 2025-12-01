@@ -13,6 +13,7 @@ PyJWT
 
 # HTTP Requests
 requests>=2.31.0
+itsdangerous
 
 # Google APIs
 google-auth>=2.29.0
