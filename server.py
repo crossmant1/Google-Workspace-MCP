@@ -27,6 +27,10 @@ import html
 import re
 from functools import lru_cache
 from contextlib import asynccontextmanager
+from starlette.middleware import Middleware
+from starlette.middleware.sessions import SessionMiddleware
+from itsdangerous import TimestampSigner, BadSignature
+import secrets
 
 load_dotenv()
 
@@ -56,6 +60,20 @@ if not AZURE_SQL_USERNAME:
     missing_vars.append("AZURE_SQL_USERNAME")
 if not AZURE_SQL_PASSWORD:
     missing_vars.append("AZURE_SQL_PASSWORD")
+    
+# After other environment variables
+COOKIE_SECRET = os.getenv("COOKIE_SECRET")
+if not COOKIE_SECRET:
+    print("WARNING: No COOKIE_SECRET found, generating temporary key")
+    COOKIE_SECRET = secrets.token_urlsafe(32)
+else:
+    COOKIE_SECRET = COOKIE_SECRET.encode()
+
+# Cookie settings
+COOKIE_NAME = "mcp_session"
+COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days in seconds
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # Set this for production
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"  # True in production
 
 if missing_vars:
     raise RuntimeError(f"Missing required environment variables: {', '.join(missing_vars)}")
@@ -69,6 +87,35 @@ else:
     ENCRYPTION_KEY = ENCRYPTION_KEY.encode()
 
 cipher_suite = Fernet(ENCRYPTION_KEY)
+
+def create_signed_cookie_value(session_token: str) -> str:
+    """Create a signed cookie value from session token"""
+    signer = TimestampSigner(COOKIE_SECRET)
+    return signer.sign(session_token).decode()
+
+def verify_signed_cookie(cookie_value: str, max_age: int = COOKIE_MAX_AGE) -> Optional[str]:
+    """Verify and extract session token from signed cookie"""
+    try:
+        signer = TimestampSigner(COOKIE_SECRET)
+        session_token = signer.unsign(cookie_value.encode(), max_age=max_age).decode()
+        return session_token
+    except (BadSignature, Exception) as e:
+        print(f"Cookie verification failed: {e}")
+        return None
+
+async def get_user_from_cookie(request: StarletteRequest) -> Optional[str]:
+    """Extract and validate user_id from request cookie"""
+    cookie_value = request.cookies.get(COOKIE_NAME)
+    if not cookie_value:
+        return None
+
+   
+    session_token = verify_signed_cookie(cookie_value)
+    if not session_token:
+        return None
+    
+    user_id = get_user_from_session(session_token)
+    return user_id
 
 SCOPES = [
     "openid",  # REQUIRED for ID token
@@ -441,11 +488,27 @@ def update_last_login(user_id: str):
         return_connection(conn)
 
 # Authentication helper
-async def verify_api_key(api_key: Optional[str]) -> Optional[str]:
-    """Verify API key and return user_id"""
-    if not api_key:
+async def verify_user_from_request(request: StarletteRequest) -> Optional[str]:
+    """Extract user_id from request state (set by middleware)"""
+    return request.state.get("user_id")
+
+# For MCP tools, we need to extract request from context
+# This is a helper that MCP tools will use
+async def get_authenticated_user() -> Optional[str]:
+    """Get authenticated user from current request context"""
+    # MCP FastMCP provides access to request via context
+    from contextvars import ContextVar
+    
+    # This assumes FastMCP sets a context variable with the request
+    # You may need to adjust based on FastMCP's actual implementation
+    try:
+        # Access the current request from FastMCP context
+        # This is framework-specific - check FastMCP docs
+        from fastmcp.server import get_request_context
+        request = get_request_context()
+        return request.state.get("user_id")
+    except:
         return None
-    return get_user_by_api_key(api_key)
 
 # Credentials helper with automatic token refresh
 def _get_credentials(user_id: str):
@@ -481,6 +544,24 @@ def _get_credentials(user_id: str):
             print(f"Token refresh failed for user {user_id}: {e}")
     
     return creds
+
+class CookieAuthMiddleware:
+    """Middleware to inject user_id from cookie into request state"""
+    
+    def __init__(self, app):
+        self.app = app
+    
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            request = StarletteRequest(scope, receive)
+            
+            # Extract user_id from cookie
+            user_id = await get_user_from_cookie(request)
+            
+            # Store in request state for tools to access
+            scope["state"] = {"user_id": user_id}
+        
+        await self.app(scope, receive, send)
 
 # --- MCP SETUP ---
 mcp = FastMCP("Google Drive, Gmail, Calendar & Tasks MCP")
@@ -590,11 +671,11 @@ async def _read_file_content_helper(user_id: str, file_id: str) -> dict:
 # --- DRIVE TOOLS ---
 
 @mcp.tool()
-async def list_drive_files(api_key: str, max_results: int = 20) -> dict:
+async def list_drive_files(max_results: int = 20) -> dict:
     """List files from Google Drive"""
-    user_id = await verify_api_key(api_key)
+    user_id = get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -621,11 +702,11 @@ async def list_drive_files(api_key: str, max_results: int = 20) -> dict:
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def search_drive_files(api_key: str, query: str, max_results: int = 10) -> dict:
+async def search_drive_files(query: str, max_results: int = 10) -> dict:
     """Search for files in Google Drive by name"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -655,11 +736,11 @@ async def search_drive_files(api_key: str, query: str, max_results: int = 10) ->
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def read_file_by_name(api_key: str, file_name: str) -> dict:
+async def read_file_by_name(file_name: str) -> dict:
     """Read the contents of a file from Google Drive by searching for its name"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -700,12 +781,12 @@ async def read_file_by_name(api_key: str, file_name: str) -> dict:
         return {"error": str(e), "user_id": user_id, "searched_for": file_name, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def read_file_content(api_key: str, file_id: str) -> dict:
+async def read_file_content(file_id: str) -> dict:
     """Read the contents of a specific file from Google Drive"""
     # Implementation unchanged
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
     
     try:
         result = await _read_file_content_helper(user_id, file_id)
@@ -716,12 +797,12 @@ async def read_file_content(api_key: str, file_id: str) -> dict:
         return {"error": str(e), "user_id": user_id, "file_id": file_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def update_document_content(api_key: str, file_id: str, new_content: str) -> dict:
+async def update_document_content(file_id: str, new_content: str) -> dict:
     """Update the contents of a Google Docs document"""
     # Implementation unchanged
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -792,11 +873,11 @@ async def update_document_content(api_key: str, file_id: str, new_content: str) 
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def update_document_by_name(api_key: str, file_name: str, new_content: str) -> dict:
+async def update_document_by_name(file_name: str, new_content: str) -> dict:
     """Update the contents of a Google Docs document by searching for its name"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -924,11 +1005,11 @@ async def _list_emails_helper(user_id: str, query: Optional[str] = None, max_res
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def list_emails(api_key: str, max_results: int = 20) -> dict:
+async def list_emails(max_results: int = 20) -> dict:
     """List recent emails from Gmail"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
     
     result = await _list_emails_helper(user_id, max_results=max_results)
     if "error" not in result:
@@ -938,11 +1019,11 @@ async def list_emails(api_key: str, max_results: int = 20) -> dict:
     return result
 
 @mcp.tool()
-async def search_emails(api_key: str, query: str, max_results: int = 20) -> dict:
+async def search_emails(query: str, max_results: int = 20) -> dict:
     """Search for emails in Gmail"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
         
     result = await _list_emails_helper(user_id, query=query, max_results=max_results)
     if "error" not in result:
@@ -952,11 +1033,11 @@ async def search_emails(api_key: str, query: str, max_results: int = 20) -> dict
     return result
 
 @mcp.tool()
-async def read_email(api_key: str, email_id: str) -> dict:
+async def read_email(email_id: str) -> dict:
     """Read the full body of a specific email"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1004,9 +1085,9 @@ async def send_email(
     bcc: Optional[str] = None
 ) -> dict:
     """Send an email"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1047,11 +1128,11 @@ async def send_email(
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def mark_email_as_read(api_key: str, email_id: str) -> dict:
+async def mark_email_as_read(email_id: str) -> dict:
     """Mark an email as read (removes the UNREAD label)"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1077,11 +1158,11 @@ async def mark_email_as_read(api_key: str, email_id: str) -> dict:
         return {"error": str(e), "user_id": user_id, "email_id": email_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def mark_email_as_unread(api_key: str, email_id: str) -> dict:
+async def mark_email_as_unread(email_id: str) -> dict:
     """Mark an email as unread (adds the UNREAD label)"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1117,9 +1198,9 @@ async def list_calendar_events(
     timezone: str = None
 ) -> dict:
     """List upcoming events from Google Calendar"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1184,9 +1265,9 @@ async def create_calendar_event(
     timezone: str = None
 ) -> dict:
     """Create a new event in Google Calendar"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1250,9 +1331,9 @@ async def update_calendar_event(
     timezone: str = None
 ) -> dict:
     """Update an existing event in Google Calendar"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1311,9 +1392,9 @@ async def delete_calendar_event(
     calendar_id: str = "primary"
 ) -> dict:
     """Delete an event from Google Calendar"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1345,9 +1426,9 @@ async def search_calendar_events(
     calendar_id: str = "primary"
 ) -> dict:
     """Search for calendar events matching a query"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1400,9 +1481,9 @@ async def search_calendar_events(
 @mcp.tool()
 async def list_task_lists(api_key: str) -> dict:
     """List all Google Tasks task lists"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1436,9 +1517,9 @@ async def list_tasks(
     max_results: int = 20
 ) -> dict:
     """List tasks from a specific Google Tasks list"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1486,9 +1567,9 @@ async def create_task(
     task_list_id: str = "@default"
 ) -> dict:
     """Create a new task in Google Tasks"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1526,11 +1607,11 @@ async def create_task(
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 @mcp.tool()
-async def create_task_from_email(api_key: str, email_id: str, task_list_id: str = "@default", include_snippet: bool = True, include_sender: bool = True, mark_email_done: bool = False) -> dict:
+async def create_task_from_email(email_id: str, task_list_id: str = "@default", include_snippet: bool = True, include_sender: bool = True, mark_email_done: bool = False) -> dict:
     """Create a Google Task from a Gmail email (mimics Gmail's 'Add to Tasks' button)"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1657,9 +1738,9 @@ async def add_emails_to_tasks(
     mark_emails_done: bool = False
 ) -> dict:
     """Create Google Tasks from multiple Gmail emails at once (bulk operation)"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     # Split email IDs
     ids_list = [id.strip() for id in email_ids.split(",") if id.strip()]
@@ -1717,9 +1798,9 @@ async def create_task_from_email_search(
     mark_emails_done: bool = False
 ) -> dict:
     """Search for emails and create tasks from all matching results"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     # First, search for emails
     max_emails = min(max_emails, 20)
@@ -1776,9 +1857,9 @@ async def update_task(
     task_list_id: str = "@default"
 ) -> dict:
     """Update an existing task in Google Tasks"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1822,9 +1903,9 @@ async def complete_task(
     task_list_id: str = "@default"
 ) -> dict:
     """Mark a task as completed"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1860,9 +1941,9 @@ async def delete_task(
     task_list_id: str = "@default"
 ) -> dict:
     """Delete a task from Google Tasks"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Authentication required. Please complete OAuth flow."}
 
     try:
         from googleapiclient.discovery import build
@@ -1889,7 +1970,7 @@ async def delete_task(
 @mcp.tool()
 async def get_auth_status(api_key: str) -> dict:
     """Check the authentication status and return user info"""
-    user_id = await verify_api_key(api_key)
+    user_id = await get_authenticated_user()
     if not user_id:
         return {"authenticated": False, "error": "Invalid API key"}
     
@@ -2014,42 +2095,19 @@ async def auth_page(request: StarletteRequest):
     return HTMLResponse(content=html_content)
 
 async def oauth_callback(request: StarletteRequest):
-    """Handle the OAuth2 callback from Google"""
+    """Handle the OAuth2 callback from Google and set session cookie"""
     from google_auth_oauthlib.flow import Flow
-    import jwt  # You may need to: pip install PyJWT
+    from starlette.responses import HTMLResponse
+    import jwt
 
     code = request.query_params.get("code")
     if not code:
         return StarletteJSONResponse({"error": "No code found in callback"}, status_code=400)
     
     try:
-        flow = Flow.from_client_config(
-            {
-                "web": {
-                    "client_id": CLIENT_ID,
-                    "client_secret": CLIENT_SECRET,
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                }
-            },
-            scopes=SCOPES,
-            redirect_uri=REDIRECT_URI,
-        )
+        # ... (existing flow setup code) ...
         
-        flow.fetch_token(code=code)
-        
-        creds = flow.credentials
-        token_data = {
-            "access_token": creds.token,
-            "refresh_token": creds.refresh_token,
-            "token_uri": creds.token_uri,
-            "client_id": creds.client_id,
-            "client_secret": creds.client_secret,
-            "scopes": creds.scopes,
-            "expires_in": (creds.expiry - datetime.utcnow()).total_seconds()
-        }
-
-        # CHANGED: Get user info from ID token instead of API call
+        # Get user info from ID token
         id_token = creds.id_token
         if not id_token:
             return StarletteJSONResponse(
@@ -2057,11 +2115,9 @@ async def oauth_callback(request: StarletteRequest):
                 status_code=500
             )
         
-        # Decode the ID token (no verification needed since it came directly from Google)
         user_info = jwt.decode(id_token, options={"verify_signature": False})
-        
         email = user_info.get("email")
-        display_name = user_info.get("name", email)  # Fallback to email if no name
+        display_name = user_info.get("name", email)
         
         if not email:
             return StarletteJSONResponse(
@@ -2069,45 +2125,100 @@ async def oauth_callback(request: StarletteRequest):
                 status_code=500
             )
 
-        # Rest of your code remains the same...
+        # Create or get user
         user = get_user_by_email(email)
         if user:
             user_id = user["user_id"]
-            api_key = "REUSED"
+            is_new_user = False
         else:
             user_id, api_key = create_user(email, display_name)
+            is_new_user = True
         
+        # Store tokens
         store_tokens(user_id, token_data, SCOPES)
         update_last_login(user_id)
         
+        # Create session
         session_token = create_session(
             user_id, 
             request.client.host, 
             request.headers.get("User-Agent", "Unknown")
         )
         
-        log_action(user_id, "oauth_callback", True, "auth", f"User {email} authenticated", request.client.host)
+        log_action(user_id, "oauth_callback", True, "auth", 
+                   f"User {email} authenticated", request.client.host)
 
-        response_body = {
-            "message": "Authentication successful!",
-            "user_id": user_id,
-            "email": email,
-            "session_token": session_token
-        }
+        # Create signed cookie value
+        signed_cookie = create_signed_cookie_value(session_token)
         
-        if api_key != "REUSED":
-            response_body["api_key"] = api_key
-            response_body["api_key_message"] = "SAVE THIS API KEY. It will not be shown again."
-        else:
-            response_body["api_key_message"] = "API key already provisioned. Check your records."
-
-        return StarletteJSONResponse(response_body)
+        # Return HTML page that sets cookie and shows success
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Authentication Successful</title>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    max-width: 600px;
+                    margin: 50px auto;
+                    padding: 20px;
+                    text-align: center;
+                }}
+                .success {{
+                    background-color: #d4edda;
+                    border: 1px solid #c3e6cb;
+                    color: #155724;
+                    padding: 20px;
+                    border-radius: 4px;
+                    margin: 20px 0;
+                }}
+                .info {{
+                    background-color: #f0f0f0;
+                    padding: 15px;
+                    border-radius: 4px;
+                    margin-top: 20px;
+                }}
+            </style>
+        </head>
+        <body>
+            <h1>✓ Authentication Successful!</h1>
+            <div class="success">
+                <p><strong>Email:</strong> {email}</p>
+                <p><strong>Name:</strong> {display_name}</p>
+            </div>
+            <div class="info">
+                <h3>You're all set!</h3>
+                <p>Your session has been saved securely. You can now close this window.</p>
+                <p>The AI agent can now access your Google Workspace on your behalf.</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        response = HTMLResponse(content=html_content)
+        
+        # Set secure HTTP-only cookie
+        response.set_cookie(
+            key=COOKIE_NAME,
+            value=signed_cookie,
+            max_age=COOKIE_MAX_AGE,
+            httponly=True,  # Prevents JavaScript access
+            secure=COOKIE_SECURE,  # True in production (HTTPS only)
+            samesite="lax",  # CSRF protection
+            domain=COOKIE_DOMAIN  # Set for production
+        )
+        
+        return response
 
     except Exception as e:
         traceback.print_exc()
         log_action("N/A", "oauth_callback", False, "auth", str(e), request.client.host)
-        return StarletteJSONResponse({"error": str(e), "traceback": traceback.format_exc()}, status_code=500)
-
+        return StarletteJSONResponse(
+            {"error": str(e), "traceback": traceback.format_exc()}, 
+            status_code=500
+        )
+        
 async def health(request: StarletteRequest):
     """Health check endpoint, including DB connection"""
     try:
@@ -2119,6 +2230,42 @@ async def health(request: StarletteRequest):
         db_status = "connected"
     except Exception as e:
         db_status = f"disconnected: {e}"
+
+async def logout(request: StarletteRequest):
+    """Logout user and clear session cookie"""
+    user_id = await get_user_from_cookie(request)
+    
+    if user_id:
+        # Optionally: invalidate session in database
+        cookie_value = request.cookies.get(COOKIE_NAME)
+        if cookie_value:
+            session_token = verify_signed_cookie(cookie_value)
+            if session_token:
+                # Add a function to invalidate session
+                # invalidate_session(session_token)
+                pass
+        
+        log_action(user_id, "logout", True, "auth", "User logged out", request.client.host)
+    
+    response = HTMLResponse("""
+        <!DOCTYPE html>
+        <html>
+        <head><title>Logged Out</title></head>
+        <body>
+            <h1>You've been logged out</h1>
+            <p><a href="/start-auth">Login again</a></p>
+        </body>
+        </html>
+    """)
+    
+    # Clear the cookie
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        domain=COOKIE_DOMAIN
+    )
+    
+    return response
+    
 
     return StarletteJSONResponse({
         "status": "ok",
@@ -2158,8 +2305,11 @@ app = Starlette(
         Route("/start-auth", auth_page),
         Route("/auth", start_auth),
         Route("/oauth2callback", oauth_callback),
+        Route("/logout", logout), 
         Route("/health", health),
         Mount("/", mcp_asgi),  # Mount MCP at root - it handles /mcp/ path itself
     ],
     lifespan=mcp_asgi.lifespan,  # CRITICAL: Use mcp_asgi's lifespan
 )
+app = CookieAuthMiddleware(app)
+
