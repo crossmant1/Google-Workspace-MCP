@@ -2,6 +2,8 @@ from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP
 from dotenv import load_dotenv
+from typing import Optional
+from starlette.requests import Request as StarletteRequest
 import os
 import requests
 import io
@@ -501,21 +503,9 @@ async def verify_user_from_request(request: StarletteRequest) -> Optional[str]:
 
 # For MCP tools, we need to extract request from context
 # This is a helper that MCP tools will use
-async def get_authenticated_user() -> Optional[str]:
-    """Get authenticated user from current request context"""
-    # MCP FastMCP provides access to request via context
-    from contextvars import ContextVar
-    
-    # This assumes FastMCP sets a context variable with the request
-    # You may need to adjust based on FastMCP's actual implementation
-    try:
-        # Access the current request from FastMCP context
-        # This is framework-specific - check FastMCP docs
-        from fastmcp.server import get_request_context
-        request = get_request_context()
-        return request.state.get("user_id")
-    except:
-        return None
+async def get_user_from_tool_context(request: StarletteRequest) -> Optional[str]:
+    """Extract user_id from request in MCP tool context"""
+    return await get_user_from_cookie(request)
 
 # Credentials helper with automatic token refresh
 def _get_credentials(user_id: str):
@@ -677,10 +667,12 @@ async def _read_file_content_helper(user_id: str, file_id: str) -> dict:
 
 # --- DRIVE TOOLS ---
 
+from fastapi import Request
+
 @mcp.tool()
-async def list_drive_files(max_results: int = 20) -> dict:
+async def list_drive_files(request: Request, max_results: int = 20) -> dict:
     """List files from Google Drive"""
-    user_id = await get_authenticated_user()
+    user_id = await get_user_from_cookie(request)
     if not user_id:
         return {"error": "Authentication required. Please complete OAuth flow."}
 
