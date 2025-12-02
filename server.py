@@ -2112,7 +2112,36 @@ async def oauth_callback(request: StarletteRequest):
         return StarletteJSONResponse({"error": "No code found in callback"}, status_code=400)
     
     try:
-        # ... (existing flow setup code) ...
+        # CREATE THE FLOW AND FETCH TOKEN - THIS WAS MISSING!
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": CLIENT_ID,
+                    "client_secret": CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                }
+            },
+            scopes=SCOPES,
+            redirect_uri=REDIRECT_URI,
+        )
+        
+        # Exchange authorization code for tokens
+        flow.fetch_token(code=code)
+        
+        # Get credentials
+        creds = flow.credentials
+        
+        # Prepare token data for storage
+        token_data = {
+            "access_token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "scopes": creds.scopes,
+            "expires_in": (creds.expiry - datetime.utcnow()).total_seconds() if creds.expiry else 3600
+        }
         
         # Get user info from ID token
         id_token = creds.id_token
@@ -2206,7 +2235,6 @@ async def oauth_callback(request: StarletteRequest):
         response = HTMLResponse(content=html_content)
         
         # Set secure HTTP-only cookie
-        # In your oauth_callback function
         response.set_cookie(
             key=COOKIE_NAME,
             value=signed_cookie,
