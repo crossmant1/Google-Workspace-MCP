@@ -62,18 +62,25 @@ if not AZURE_SQL_PASSWORD:
     missing_vars.append("AZURE_SQL_PASSWORD")
     
 # After other environment variables
+# Environment variables
 COOKIE_SECRET = os.getenv("COOKIE_SECRET")
 if not COOKIE_SECRET:
     print("WARNING: No COOKIE_SECRET found, generating temporary key")
     COOKIE_SECRET = secrets.token_urlsafe(32)
-else:
-    COOKIE_SECRET = COOKIE_SECRET.encode()
 
-# Cookie settings
+# Cookie settings for Render deployment
 COOKIE_NAME = "mcp_session"
-COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days in seconds
-COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # Set this for production
-COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"  # True in production
+COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
+
+# No domain restriction - cookies only for exact domain
+COOKIE_DOMAIN_ENV = os.getenv("COOKIE_DOMAIN", "").strip().lower()
+COOKIE_DOMAIN = None if COOKIE_DOMAIN_ENV in ("", "none", "null") else COOKIE_DOMAIN_ENV
+
+# Always true for Render (provides HTTPS)
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"
+
+# Always Lax for CSRF protection
+COOKIE_SAMESITE = "lax"
 
 if missing_vars:
     raise RuntimeError(f"Missing required environment variables: {', '.join(missing_vars)}")
@@ -2199,14 +2206,15 @@ async def oauth_callback(request: StarletteRequest):
         response = HTMLResponse(content=html_content)
         
         # Set secure HTTP-only cookie
+        # In your oauth_callback function
         response.set_cookie(
             key=COOKIE_NAME,
             value=signed_cookie,
             max_age=COOKIE_MAX_AGE,
-            httponly=True,  # Prevents JavaScript access
-            secure=COOKIE_SECURE,  # True in production (HTTPS only)
-            samesite="lax",  # CSRF protection
-            domain=COOKIE_DOMAIN  # Set for production
+            httponly=True,           # Prevents JavaScript access
+            secure=COOKIE_SECURE,    # True on Render (HTTPS)
+            samesite=COOKIE_SAMESITE, # "lax" for CSRF protection
+            domain=COOKIE_DOMAIN     # None - no domain restriction
         )
         
         return response
