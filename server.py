@@ -680,7 +680,7 @@ async def _read_file_content_helper(user_id: str, file_id: str) -> dict:
 @mcp.tool()
 async def list_drive_files(max_results: int = 20) -> dict:
     """List files from Google Drive"""
-    user_id = get_authenticated_user()
+    user_id = await get_authenticated_user()
     if not user_id:
         return {"error": "Authentication required. Please complete OAuth flow."}
 
@@ -1084,7 +1084,6 @@ async def read_email(email_id: str) -> dict:
 
 @mcp.tool()
 async def send_email(
-    api_key: str,
     to: str,
     subject: str,
     body: str,
@@ -1199,7 +1198,6 @@ async def mark_email_as_unread(email_id: str) -> dict:
 
 @mcp.tool()
 async def list_calendar_events(
-    api_key: str,
     max_results: int = 10,
     calendar_id: str = "primary",
     timezone: str = None
@@ -1261,7 +1259,6 @@ async def list_calendar_events(
 
 @mcp.tool()
 async def create_calendar_event(
-    api_key: str,
     summary: str,
     start_time: str,
     end_time: str,
@@ -1327,7 +1324,6 @@ async def create_calendar_event(
 
 @mcp.tool()
 async def update_calendar_event(
-    api_key: str,
     event_id: str,
     summary: str = "",
     start_time: str = "",
@@ -1394,7 +1390,6 @@ async def update_calendar_event(
 
 @mcp.tool()
 async def delete_calendar_event(
-    api_key: str,
     event_id: str,
     calendar_id: str = "primary"
 ) -> dict:
@@ -1427,7 +1422,6 @@ async def delete_calendar_event(
 
 @mcp.tool()
 async def search_calendar_events(
-    api_key: str,
     query: str,
     max_results: int = 10,
     calendar_id: str = "primary"
@@ -1519,7 +1513,6 @@ async def list_task_lists(api_key: str) -> dict:
 
 @mcp.tool()
 async def list_tasks(
-    api_key: str,
     task_list_id: str = "@default",
     max_results: int = 20
 ) -> dict:
@@ -1567,7 +1560,6 @@ async def list_tasks(
 
 @mcp.tool()
 async def create_task(
-    api_key: str,
     title: str,
     notes: str = "",
     due: str = "",
@@ -1739,7 +1731,6 @@ async def create_task_from_email(email_id: str, task_list_id: str = "@default", 
     
 @mcp.tool()
 async def add_emails_to_tasks(
-    api_key: str,
     email_ids: str,
     task_list_id: str = "@default",
     mark_emails_done: bool = False
@@ -1798,7 +1789,6 @@ async def add_emails_to_tasks(
 
 @mcp.tool()
 async def create_task_from_email_search(
-    api_key: str,
     search_query: str,
     max_emails: int = 5,
     task_list_id: str = "@default",
@@ -1856,7 +1846,6 @@ async def create_task_from_email_search(
 
 @mcp.tool()
 async def update_task(
-    api_key: str,
     task_id: str,
     title: str = "",
     notes: str = "",
@@ -1905,7 +1894,6 @@ async def update_task(
 
 @mcp.tool()
 async def complete_task(
-    api_key: str,
     task_id: str,
     task_list_id: str = "@default"
 ) -> dict:
@@ -1943,7 +1931,6 @@ async def complete_task(
 
 @mcp.tool()
 async def delete_task(
-    api_key: str,
     task_id: str,
     task_list_id: str = "@default"
 ) -> dict:
