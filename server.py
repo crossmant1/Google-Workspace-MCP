@@ -27,6 +27,7 @@ import html
 import re
 from functools import lru_cache
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from itsdangerous import TimestampSigner, BadSignature
@@ -94,6 +95,16 @@ else:
     ENCRYPTION_KEY = ENCRYPTION_KEY.encode()
 
 cipher_suite = Fernet(ENCRYPTION_KEY)
+
+_user_id_context: ContextVar[Optional[str]] = ContextVar('user_id', default=None)
+
+def set_user_context(user_id: Optional[str]):
+    """Set user_id in context"""
+    _user_id_context.set(user_id)
+
+def get_user_context() -> Optional[str]:
+    """Get user_id from context"""
+    return _user_id_context.get()
 
 def create_signed_cookie_value(session_token: str) -> str:
     """Create a signed cookie value from session token"""
@@ -541,7 +552,7 @@ def _get_credentials(user_id: str):
     return creds
 
 class CookieAuthMiddleware:
-    """Middleware to inject user_id from cookie into request state"""
+    """Middleware to inject user_id from cookie into request state and context"""
     
     def __init__(self, app):
         self.app = app
@@ -555,6 +566,9 @@ class CookieAuthMiddleware:
             
             # Store in request state for tools to access
             scope["state"] = {"user_id": user_id}
+            
+            # ALSO set in context variable
+            set_user_context(user_id)
         
         await self.app(scope, receive, send)
 
@@ -668,9 +682,9 @@ async def _read_file_content_helper(user_id: str, file_id: str) -> dict:
 from fastapi import Request
 
 @mcp.tool()
-async def list_drive_files(request: Request, max_results: int = 20) -> dict:
+async def list_drive_files(max_results: int = 20) -> dict:
     """List files from Google Drive"""
-    user_id = await get_user_from_cookie(request)
+    user_id = get_user_context()  # Changed from await get_authenticated_user()
     if not user_id:
         return {"error": "Authentication required. Please complete OAuth flow."}
 
