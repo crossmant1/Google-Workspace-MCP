@@ -2,8 +2,6 @@ from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP
 from dotenv import load_dotenv
-from typing import Optional
-from starlette.requests import Request as StarletteRequest
 import os
 import requests
 import io
