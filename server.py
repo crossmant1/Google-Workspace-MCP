@@ -88,26 +88,47 @@ SCOPES = [
 connection_pool = []
 MAX_POOL_SIZE = 10
 
+"""
+Database Adapter - Switches between Azure SQL and Mock Database
+Add this section to your main code, replacing the database operation functions
+"""
+import os
+from datetime import datetime, timedelta
+from typing import Optional
+import secrets
+import hashlib
+
+# Import mock database
+from mock_database import get_mock_db
+
+# Environment variable to enable mock database
+USE_MOCK_DB = os.getenv("USE_MOCK_DB", "true").lower() == "true"
+
+# Connection pool management (only for real DB)
+connection_pool = []
+MAX_POOL_SIZE = 10
+
 def get_db_connection():
-    """Create a connection to Azure SQL Database using pyodbc with connection pooling"""
+    """Create a connection to Azure SQL Database - only called when USE_MOCK_DB=false"""
+    if USE_MOCK_DB:
+        return None
+    
     # Try to reuse existing connection from pool
     while connection_pool:
         conn = connection_pool.pop()
         try:
-            # Test if connection is still alive
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()
             return conn
         except:
-            # Connection is dead, try next one
             try:
                 conn.close()
             except:
                 pass
     
     # No valid connections in pool, create new one
-    # Handle various server name formats
+    import pyodbc
     server = AZURE_SQL_SERVER
     if not server.endswith('.database.windows.net'):
         if server.startswith('tcp:'):
@@ -117,7 +138,6 @@ def get_db_connection():
     else:
         server = server.replace('tcp:', '')
     
-    # Connection string for ODBC Driver 18
     conn_str = (
         f"DRIVER={{ODBC Driver 18 for SQL Server}};"
         f"SERVER={server};"
@@ -136,15 +156,32 @@ def get_db_connection():
         print(f"Database connection failed: {e}")
         raise
 
-# Security helper functions
+def return_connection(conn):
+    """Return connection to pool - only for real DB"""
+    if USE_MOCK_DB or conn is None:
+        return
+    
+    if len(connection_pool) < MAX_POOL_SIZE:
+        connection_pool.append(conn)
+    else:
+        try:
+            conn.close()
+        except:
+            pass
+
+# Security helper functions (unchanged)
 def encrypt_token(token_data: dict) -> str:
     """Encrypt token data for storage"""
+    import json
+    from cryptography.fernet import Fernet
     json_data = json.dumps(token_data)
     encrypted = cipher_suite.encrypt(json_data.encode())
     return encrypted.decode()
 
 def decrypt_token(encrypted_data: str) -> dict:
     """Decrypt token data from storage"""
+    import json
+    from cryptography.fernet import Fernet
     decrypted = cipher_suite.decrypt(encrypted_data.encode())
     return json.loads(decrypted.decode())
 
@@ -152,23 +189,25 @@ def hash_api_key(api_key: str) -> str:
     """Hash API key for storage"""
     return hashlib.sha256(api_key.encode()).hexdigest()
 
-# Sanitization helpers
-def sanitize_drive_query(query: str) -> str:
-    """Safely escape Drive API query - NO SQL involved, just Drive API query syntax"""
-    # For Drive API, we need to escape single quotes by doubling them
-    # This is NOT SQL injection - it's Drive API's query language
-    return query.replace("'", "''")
 
-# Database operations with connection pooling
+# ===== ADAPTED DATABASE OPERATIONS =====
+
 def create_user(email: str, display_name: str) -> tuple:
     """Create a new user and return user_id and api_key"""
+    api_key = secrets.token_urlsafe(32)
+    api_key_hash = hash_api_key(api_key)
+    
+    if USE_MOCK_DB:
+        mock_db = get_mock_db()
+        user_id = mock_db.create_user(email, display_name, api_key_hash)
+        return user_id, api_key
+    
+    # Real database implementation
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
         user_id = secrets.token_urlsafe(16)
-        api_key = secrets.token_urlsafe(32)
-        api_key_hash = hash_api_key(api_key)
         
         cursor.execute("""
             INSERT INTO users (user_id, email, display_name, api_key_hash, created_at, last_login, is_active)
@@ -183,6 +222,10 @@ def create_user(email: str, display_name: str) -> tuple:
 
 def get_user_by_email(email: str) -> Optional[dict]:
     """Get user by email"""
+    if USE_MOCK_DB:
+        mock_db = get_mock_db()
+        return mock_db.get_user_by_email(email)
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -206,6 +249,10 @@ def get_user_by_api_key(api_key: str) -> Optional[str]:
     """Get user_id by API key"""
     api_key_hash = hash_api_key(api_key)
     
+    if USE_MOCK_DB:
+        mock_db = get_mock_db()
+        return mock_db.get_user_by_api_key(api_key_hash)
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -219,17 +266,23 @@ def get_user_by_api_key(api_key: str) -> Optional[str]:
 
 def store_tokens(user_id: str, token_data: dict, scopes: list):
     """Store or update tokens for a user"""
+    expires_in = token_data.get("expires_in", 3600)
+    token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+    scopes_str = " ".join(scopes)
+    
+    if USE_MOCK_DB:
+        mock_db = get_mock_db()
+        encrypted_access = encrypt_token({"token": token_data.get("access_token")})
+        encrypted_refresh = encrypt_token({"token": token_data.get("refresh_token")})
+        mock_db.store_tokens(user_id, encrypted_access, encrypted_refresh, token_expiry, scopes_str)
+        return
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
         encrypted_access = encrypt_token({"token": token_data.get("access_token")})
         encrypted_refresh = encrypt_token({"token": token_data.get("refresh_token")})
-        
-        expires_in = token_data.get("expires_in", 3600)
-        token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
-        
-        scopes_str = " ".join(scopes)
         
         cursor.execute("SELECT user_id FROM tokens WHERE user_id = ?", (user_id,))
         exists = cursor.fetchone()
@@ -253,6 +306,20 @@ def store_tokens(user_id: str, token_data: dict, scopes: list):
 
 def get_user_tokens(user_id: str) -> Optional[dict]:
     """Get decrypted tokens for a user"""
+    if USE_MOCK_DB:
+        mock_db = get_mock_db()
+        token_data = mock_db.get_user_tokens(user_id)
+        if token_data:
+            access_token_data = decrypt_token(token_data.get("access_token"))
+            refresh_token_data = decrypt_token(token_data.get("refresh_token"))
+            return {
+                "access_token": access_token_data.get("token"),
+                "refresh_token": refresh_token_data.get("token"),
+                "token_expiry": token_data.get("token_expiry"),
+                "scopes": token_data.get("scopes")
+            }
+        return None
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -282,13 +349,18 @@ def get_user_tokens(user_id: str) -> Optional[dict]:
 
 def create_session(user_id: str, ip_address: str, user_agent: str) -> str:
     """Create a new session and return session token"""
+    session_token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(days=30)
+    
+    if USE_MOCK_DB:
+        mock_db = get_mock_db()
+        mock_db.create_session(user_id, session_token, expires_at, ip_address, user_agent)
+        return session_token
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        session_token = secrets.token_urlsafe(32)
-        expires_at = datetime.utcnow() + timedelta(days=30)
-        
         cursor.execute("""
             INSERT INTO sessions (session_token, user_id, created_at, expires_at, ip_address, user_agent)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -302,6 +374,10 @@ def create_session(user_id: str, ip_address: str, user_agent: str) -> str:
 
 def get_user_from_session(session_token: str) -> Optional[str]:
     """Get user_id from session token if valid"""
+    if USE_MOCK_DB:
+        mock_db = get_mock_db()
+        return mock_db.get_user_from_session(session_token)
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -318,20 +394,21 @@ def get_user_from_session(session_token: str) -> Optional[str]:
         return_connection(conn)
 
 def log_action(user_id: str, action: str, success: bool, source: str, details: str, ip_address: str = "N/A"):
-    """Log an action to the audit_logs table"""
+    """Log an action to the audit_logs"""
     try:
+        if USE_MOCK_DB:
+            mock_db = get_mock_db()
+            mock_db.log_action(user_id, action, success, source, details, ip_address)
+            return
+        
         conn = get_db_connection()
         cursor = conn.cursor()
         
         try:
-            # Truncate details if too long
             if len(details) > 1024:
                 details = details[:1021] + "..."
             
-            # Convert boolean to int for SQL Server
             success_int = 1 if success else 0
-            
-            # Ensure datetime is UTC
             timestamp = datetime.utcnow()
                 
             cursor.execute("""
@@ -348,6 +425,11 @@ def log_action(user_id: str, action: str, success: bool, source: str, details: s
 
 def update_last_login(user_id: str):
     """Update user's last login timestamp"""
+    if USE_MOCK_DB:
+        mock_db = get_mock_db()
+        mock_db.update_last_login(user_id)
+        return
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     
