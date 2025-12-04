@@ -189,6 +189,10 @@ def hash_api_key(api_key: str) -> str:
     """Hash API key for storage"""
     return hashlib.sha256(api_key.encode()).hexdigest()
 
+def sanitize_drive_query(query: str) -> str:
+    """Sanitize query string for Google Drive API by escaping special characters"""
+    # Escape single quotes and backslashes for Drive API
+    return query.replace("\\", "\\\\").replace("'", "\\'")
 
 # ===== ADAPTED DATABASE OPERATIONS =====
 
@@ -2249,7 +2253,7 @@ app = Starlette(
         Route("/start-auth", auth_page),
         Route("/auth", start_auth),
         Route("/oauth2callback", oauth_callback),
-        Route("/check-auth", check_auth_status, methods=["POST"]),  # NEW ROUTE
+        Route("/check-auth", check_auth_status, methods=["GET"]),  # NEW ROUTE
         Route("/health", health),
         Mount("/", mcp_asgi),  # Mount MCP at root - it handles /mcp/ path itself
     ],
