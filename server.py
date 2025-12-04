@@ -1950,7 +1950,7 @@ async def start_auth(request: StarletteRequest):
 async def check_auth_status(request: StarletteRequest):
     """Check if a user's email is authenticated in the database"""
     try:
-        # Get email from query parameter instead of body
+        # Get email from query parameter
         email = request.query_params.get("email")
         
         if not email:
