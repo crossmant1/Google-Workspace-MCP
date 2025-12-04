@@ -1946,6 +1946,66 @@ async def start_auth(request: StarletteRequest):
     )
     
     return StarletteJSONResponse({"auth_url": auth_url})
+
+async def check_auth_status(request: StarletteRequest):
+    """Check if a user's email is authenticated in the database"""
+    try:
+        # Get email from request body
+        body = await request.json()
+        email = body.get("email")
+        
+        if not email:
+            return StarletteJSONResponse(
+                {"error": "Email parameter is required"}, 
+                status_code=400
+            )
+        
+        # Check if user exists
+        user = get_user_by_email(email)
+        
+        if not user:
+            log_action("N/A", "check_auth_status", False, "api", f"User not found: {email}", request.client.host)
+            return StarletteJSONResponse({
+                "authenticated": False,
+                "email": email,
+                "message": "User not found"
+            })
+        
+        # Check if user has valid tokens
+        user_id = user["user_id"]
+        token_data = get_user_tokens(user_id)
+        
+        if not token_data:
+            log_action(user_id, "check_auth_status", False, "api", f"No tokens for: {email}", request.client.host)
+            return StarletteJSONResponse({
+                "authenticated": False,
+                "email": email,
+                "user_id": user_id,
+                "message": "User exists but not authenticated"
+            })
+        
+        # Convert datetime to string for JSON serialization
+        token_expiry = token_data.get("token_expiry")
+        expiry_str = token_expiry.isoformat() if token_expiry else None
+        
+        log_action(user_id, "check_auth_status", True, "api", f"Auth check for: {email}", request.client.host)
+        return StarletteJSONResponse({
+            "authenticated": True,
+            "email": email,
+            "user_id": user_id,
+            "display_name": user.get("display_name"),
+            "is_active": user.get("is_active"),
+            "scopes": token_data.get("scopes", []),
+            "token_expiry": expiry_str
+        })
+        
+    except Exception as e:
+        traceback.print_exc()
+        log_action("N/A", "check_auth_status", False, "api", str(e), request.client.host)
+        return StarletteJSONResponse(
+            {"error": str(e), "traceback": traceback.format_exc()}, 
+            status_code=500
+        )
     
 async def auth_page(request: StarletteRequest):
     """HTML page to initiate OAuth flow"""
@@ -2129,10 +2189,11 @@ async def root(request: StarletteRequest):
     """Root endpoint"""
     return StarletteJSONResponse({
         "service": "Google Drive, Gmail, Calendar & Tasks MCP Server",
-        "database_backend": "Azure SQL (pyodbc)",
+        "database_backend": "Azure SQL (pyodbc)" if not USE_MOCK_DB else "Mock Database",
         "endpoints": {
             "auth": "/auth - Start OAuth flow (returns auth_url)",
             "callback": "/oauth2callback - OAuth callback (handles redirect)",
+            "check_auth": "/check-auth - Check if email is authenticated (POST with {email})",
             "health": "/health - Health check (includes DB)",
             "mcp": "/mcp/ - MCP protocol endpoint (POST only)"
         },
@@ -2147,7 +2208,8 @@ async def root(request: StarletteRequest):
             "step_1": "Visit /auth to get the authentication URL",
             "step_2": "Complete OAuth flow in browser",
             "step_3": "Save your API key from the callback response",
-            "step_4": "Use your API key in all MCP tool calls"
+            "step_4": "Use your API key in all MCP tool calls",
+            "check_auth_api": "POST to /check-auth with {\"email\": \"user@example.com\"}"
         }
     })
 
@@ -2158,6 +2220,7 @@ app = Starlette(
         Route("/start-auth", auth_page),
         Route("/auth", start_auth),
         Route("/oauth2callback", oauth_callback),
+        Route("/check-auth", check_auth_status, methods=["POST"]),  # NEW ROUTE
         Route("/health", health),
         Mount("/", mcp_asgi),  # Mount MCP at root - it handles /mcp/ path itself
     ],
