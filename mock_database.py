@@ -16,22 +16,26 @@ class MockDatabase:
         self.audit_logs: List[dict] = []
         self.api_key_to_user: Dict[str, str] = {}  # api_key_hash -> user_id
         
-    def create_user(self, email: str, display_name: str, api_key_hash: str) -> str:
-        """Create a new user"""
-        user_id = secrets.token_urlsafe(16)
-        
-        self.users[user_id] = {
-            "user_id": user_id,
-            "email": email,
-            "display_name": display_name,
-            "api_key_hash": api_key_hash,
-            "created_at": datetime.utcnow(),
-            "last_login": datetime.utcnow(),
-            "is_active": True
-        }
-        
-        self.api_key_to_user[api_key_hash] = user_id
-        return user_id
+def create_user(self, email: str, display_name: str, api_key_hash: str, api_key_encrypted: str = None) -> str:
+    """Create a new user"""
+    user_id = secrets.token_urlsafe(16)
+    self.users[user_id] = {
+        "user_id": user_id,
+        "email": email,
+        "display_name": display_name,
+        "api_key_hash": api_key_hash,
+        "api_key_encrypted": api_key_encrypted,  # NEW
+        "created_at": datetime.utcnow(),
+        "last_login": datetime.utcnow(),
+        "is_active": True
+    }
+    self.users_by_email[email] = user_id
+    return user_id
+
+def get_encrypted_api_key(self, user_id: str) -> Optional[str]:
+    """Get encrypted API key for a user"""
+    user = self.users.get(user_id)
+    return user.get("api_key_encrypted") if user else None
     
     def get_user_by_email(self, email: str) -> Optional[dict]:
         """Get user by email"""
