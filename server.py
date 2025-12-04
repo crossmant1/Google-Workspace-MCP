@@ -196,10 +196,11 @@ def create_user(email: str, display_name: str) -> tuple:
     """Create a new user and return user_id and api_key"""
     api_key = secrets.token_urlsafe(32)
     api_key_hash = hash_api_key(api_key)
+    api_key_encrypted = encrypt_token({"api_key": api_key})  # NEW
     
     if USE_MOCK_DB:
         mock_db = get_mock_db()
-        user_id = mock_db.create_user(email, display_name, api_key_hash)
+        user_id = mock_db.create_user(email, display_name, api_key_hash, api_key_encrypted)
         return user_id, api_key
     
     # Real database implementation
@@ -216,6 +217,31 @@ def create_user(email: str, display_name: str) -> tuple:
         
         conn.commit()
         return user_id, api_key
+    finally:
+        cursor.close()
+        return_connection(conn)
+
+def get_api_key_for_user(user_id: str) -> Optional[str]:
+    """Get the decrypted API key for a user"""
+    if USE_MOCK_DB:
+        mock_db = get_mock_db()
+        encrypted_key = mock_db.get_encrypted_api_key(user_id)
+        if encrypted_key:
+            decrypted = decrypt_token(encrypted_key)
+            return decrypted.get("api_key")
+        return None
+    
+    # For real database - would need schema update
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("SELECT api_key_encrypted FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        if row and row[0]:
+            decrypted = decrypt_token(row[0])
+            return decrypted.get("api_key")
+        return None
     finally:
         cursor.close()
         return_connection(conn)
@@ -1983,6 +2009,9 @@ async def check_auth_status(request: StarletteRequest):
                 "message": "User exists but not authenticated"
             })
         
+        # Get the user's API key
+        api_key = get_api_key_for_user(user_id)
+        
         # Convert datetime to string for JSON serialization
         token_expiry = token_data.get("token_expiry")
         expiry_str = token_expiry.isoformat() if token_expiry else None
@@ -1992,6 +2021,7 @@ async def check_auth_status(request: StarletteRequest):
             "authenticated": True,
             "email": email,
             "user_id": user_id,
+            "api_key": api_key,  # API key returned here
             "display_name": user.get("display_name"),
             "is_active": user.get("is_active"),
             "scopes": token_data.get("scopes", []),
