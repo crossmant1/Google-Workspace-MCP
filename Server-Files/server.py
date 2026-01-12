@@ -1,3 +1,12 @@
+import sys
+import os
+print(f"Python version: {sys.version}")
+print(f"Current directory: {os.getcwd()}")
+print(f"sys.path: {sys.path}")
+print(f"Directory contents: {os.listdir('.')}")
+if os.path.exists('mcp_tools'):
+    print(f"mcp_tools contents: {os.listdir('mcp_tools')}")
+
 import urllib.parse
 import secrets
 import requests
@@ -318,5 +327,5 @@ app = Starlette(
     lifespan=mcp_asgi.lifespan,  # CRITICAL: Use mcp_asgi's lifespan
 )
 
-#if __name__ == "__main__":
-#    mcp.run()
+if __name__ == "__main__":
+    mcp.run()
