@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from fastmcp import FastMCP
 from starlette.applications import Starlette
-from starlette.routing import Route, Mount  # ADD Mount here
+from starlette.routing import Route, Mount  
 from starlette.responses import JSONResponse, HTMLResponse
 from starlette.requests import Request
 
@@ -318,5 +318,5 @@ app = Starlette(
     lifespan=mcp_asgi.lifespan,  # CRITICAL: Use mcp_asgi's lifespan
 )
 
-if __name__ == "__main__":
-    mcp.run()
+#if __name__ == "__main__":
+#    mcp.run()
