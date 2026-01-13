@@ -233,7 +233,6 @@ async def oauth_callback(request: StarletteRequest):
                 status_code=500
             )
 
-        # Rest of your code remains the same...
         user = get_user_by_email(email)
         if user:
             user_id = user["user_id"]

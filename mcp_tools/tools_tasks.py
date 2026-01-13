@@ -5,7 +5,7 @@ from googleapiclient.errors import HttpError
 
 from auth import verify_api_key, _get_credentials
 from database import log_action, get_user_tokens
-from tools_gmail import search_emails
+from mcp_tools.tools_gmail import search_emails
 
 
 #@mcp.tool()
