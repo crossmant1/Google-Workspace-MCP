@@ -3,19 +3,20 @@ import traceback
 from typing import Optional, Dict
 from googleapiclient.discovery import build
 
+from auth import verify_email, _get_credentials
 import auth, database, config
 
 #@mcp.tool()
 async def list_calendar_events(
-    api_key: str,
+    email: str,
     max_results: int = 10,
     calendar_id: str = "primary",
     timezone: str = None
 ) -> dict:
     """List upcoming events from Google Calendar"""
-    user_id = await auth.verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -69,7 +70,7 @@ async def list_calendar_events(
 
 #@mcp.tool()
 async def create_calendar_event(
-    api_key: str,
+    email: str,
     summary: str,
     start_time: str,
     end_time: str,
@@ -80,9 +81,9 @@ async def create_calendar_event(
     timezone: str = None
 ) -> dict:
     """Create a new event in Google Calendar"""
-    user_id = await auth.verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -111,7 +112,7 @@ async def create_calendar_event(
             event["end"] = {"date": end_time}
             
         if attendees:
-            event["attendees"] = [{"email": email.strip()} for email in attendees.split(",")]
+            event["attendees"] = [{"email": attendee_email.strip()} for attendee_email in attendees.split(",")]
             
         created_event = service.events().insert(
             calendarId=calendar_id,
@@ -135,7 +136,7 @@ async def create_calendar_event(
 
 #@mcp.tool()
 async def update_calendar_event(
-    api_key: str,
+    email: str,
     event_id: str,
     summary: str = "",
     start_time: str = "",
@@ -146,9 +147,9 @@ async def update_calendar_event(
     timezone: str = None
 ) -> dict:
     """Update an existing event in Google Calendar"""
-    user_id = await auth.verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -202,14 +203,14 @@ async def update_calendar_event(
 
 #@mcp.tool()
 async def delete_calendar_event(
-    api_key: str,
+    email: str,
     event_id: str,
     calendar_id: str = "primary"
 ) -> dict:
     """Delete an event from Google Calendar"""
-    user_id = await auth.verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -235,15 +236,15 @@ async def delete_calendar_event(
 
 #@mcp.tool()
 async def search_calendar_events(
-    api_key: str,
+    email: str,
     query: str,
     max_results: int = 10,
     calendar_id: str = "primary"
 ) -> dict:
     """Search for calendar events matching a query"""
-    user_id = await auth.verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build

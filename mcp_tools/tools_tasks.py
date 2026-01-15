@@ -3,17 +3,17 @@ from typing import Optional, Dict
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from auth import verify_api_key, _get_credentials
+from auth import verify_email, _get_credentials
 from database import log_action, get_user_tokens
 from mcp_tools.tools_gmail import search_emails
 
 
 #@mcp.tool()
-async def list_task_lists(api_key: str) -> dict:
+async def list_task_lists(email: str) -> dict:
     """List all Google Tasks task lists"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -42,14 +42,14 @@ async def list_task_lists(api_key: str) -> dict:
 
 #@mcp.tool()
 async def list_tasks(
-    api_key: str,
+    email: str,
     task_list_id: str = "@default",
     max_results: int = 20
 ) -> dict:
     """List tasks from a specific Google Tasks list"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -90,16 +90,16 @@ async def list_tasks(
 
 #@mcp.tool()
 async def create_task(
-    api_key: str,
+    email: str,
     title: str,
     notes: str = "",
     due: str = "",
     task_list_id: str = "@default"
 ) -> dict:
     """Create a new task in Google Tasks"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -137,11 +137,11 @@ async def create_task(
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 #@mcp.tool()
-async def create_task_from_email(api_key: str, email_id: str, task_list_id: str = "@default", include_snippet: bool = True, include_sender: bool = True, mark_email_done: bool = False) -> dict:
+async def create_task_from_email(email: str, email_id: str, task_list_id: str = "@default", include_snippet: bool = True, include_sender: bool = True, mark_email_done: bool = False) -> dict:
     """Create a Google Task from a Gmail email (mimics Gmail's 'Add to Tasks' button)"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -262,15 +262,15 @@ async def create_task_from_email(api_key: str, email_id: str, task_list_id: str 
     
 #@mcp.tool()
 async def add_emails_to_tasks(
-    api_key: str,
+    email: str,
     email_ids: str,
     task_list_id: str = "@default",
     mark_emails_done: bool = False
 ) -> dict:
     """Create Google Tasks from multiple Gmail emails at once (bulk operation)"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     # Split email IDs
     ids_list = [id.strip() for id in email_ids.split(",") if id.strip()]
@@ -290,7 +290,7 @@ async def add_emails_to_tasks(
     # Process each email
     for email_id in ids_list:
         result = await create_task_from_email(
-            api_key=api_key,
+            email=email,
             email_id=email_id,
             task_list_id=task_list_id,
             mark_email_done=mark_emails_done
@@ -321,20 +321,20 @@ async def add_emails_to_tasks(
 
 #@mcp.tool()
 async def create_task_from_email_search(
-    api_key: str,
+    email: str,
     search_query: str,
     max_emails: int = 5,
     task_list_id: str = "@default",
     mark_emails_done: bool = False
 ) -> dict:
     """Search for emails and create tasks from all matching results"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     # First, search for emails
     max_emails = min(max_emails, 20)
-    search_result = await search_emails(api_key=api_key, query=search_query, max_results=max_emails)
+    search_result = await search_emails(email=email, query=search_query, max_results=max_emails)
     
     if not search_result.get("success"):
         log_action(user_id, "create_task_from_email_search", False, "mcp_tool", 
@@ -363,7 +363,7 @@ async def create_task_from_email_search(
     
     # Use bulk add function
     result = await add_emails_to_tasks(
-        api_key=api_key,
+        email=email,
         email_ids=",".join(email_ids),
         task_list_id=task_list_id,
         mark_emails_done=mark_emails_done
@@ -379,7 +379,7 @@ async def create_task_from_email_search(
 
 #@mcp.tool()
 async def update_task(
-    api_key: str,
+    email: str,
     task_id: str,
     title: str = "",
     notes: str = "",
@@ -387,9 +387,9 @@ async def update_task(
     task_list_id: str = "@default"
 ) -> dict:
     """Update an existing task in Google Tasks"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -428,14 +428,14 @@ async def update_task(
 
 #@mcp.tool()
 async def complete_task(
-    api_key: str,
+    email: str,
     task_id: str,
     task_list_id: str = "@default"
 ) -> dict:
     """Mark a task as completed"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -466,14 +466,14 @@ async def complete_task(
 
 #@mcp.tool()
 async def delete_task(
-    api_key: str,
+    email: str,
     task_id: str,
     task_list_id: str = "@default"
 ) -> dict:
     """Delete a task from Google Tasks"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -498,11 +498,11 @@ async def delete_task(
         return {"error": str(e), "user_id": user_id, "task_id": task_id, "traceback": traceback.format_exc()}
 
 #@mcp.tool()
-async def get_auth_status(api_key: str) -> dict:
+async def get_auth_status(email: str) -> dict:
     """Check the authentication status and return user info"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"authenticated": False, "error": "Invalid API key"}
+        return {"authenticated": False, "error": "Invalid email or user not authenticated with Google."}
     
     try:
         token_data = get_user_tokens(user_id)

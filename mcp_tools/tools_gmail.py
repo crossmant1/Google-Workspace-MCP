@@ -6,7 +6,7 @@ from typing import Optional, Dict
 from email.mime.text import MIMEText
 from googleapiclient.discovery import build
 
-from auth import verify_api_key, _get_credentials
+from auth import verify_email, _get_credentials
 from database import log_action, get_user_tokens
 
 
@@ -100,11 +100,11 @@ async def _list_emails_helper(user_id: str, query: Optional[str] = None, max_res
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 #@mcp.tool()
-async def list_emails(api_key: str, max_results: int = 20) -> dict:
+async def list_emails(email: str, max_results: int = 20) -> dict:
     """List recent emails from Gmail"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
     
     result = await _list_emails_helper(user_id, max_results=max_results)
     if "error" not in result:
@@ -114,11 +114,11 @@ async def list_emails(api_key: str, max_results: int = 20) -> dict:
     return result
 
 #@mcp.tool()
-async def search_emails(api_key: str, query: str, max_results: int = 20) -> dict:
+async def search_emails(email: str, query: str, max_results: int = 20) -> dict:
     """Search for emails in Gmail"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
         
     result = await _list_emails_helper(user_id, query=query, max_results=max_results)
     if "error" not in result:
@@ -128,11 +128,11 @@ async def search_emails(api_key: str, query: str, max_results: int = 20) -> dict
     return result
 
 #@mcp.tool()
-async def read_email(api_key: str, email_id: str) -> dict:
+async def read_email(email: str, email_id: str) -> dict:
     """Read the full body of a specific email"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -172,7 +172,7 @@ async def read_email(api_key: str, email_id: str) -> dict:
 
 #@mcp.tool()
 async def send_email(
-    api_key: str,
+    email: str,
     to: str,
     subject: str,
     body: str,
@@ -180,9 +180,9 @@ async def send_email(
     bcc: Optional[str] = None
 ) -> dict:
     """Send an email"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -223,11 +223,11 @@ async def send_email(
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 #@mcp.tool()
-async def mark_email_as_read(api_key: str, email_id: str) -> dict:
+async def mark_email_as_read(email: str, email_id: str) -> dict:
     """Mark an email as read (removes the UNREAD label)"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -253,11 +253,11 @@ async def mark_email_as_read(api_key: str, email_id: str) -> dict:
         return {"error": str(e), "user_id": user_id, "email_id": email_id, "traceback": traceback.format_exc()}
 
 #@mcp.tool()
-async def mark_email_as_unread(api_key: str, email_id: str) -> dict:
+async def mark_email_as_unread(email: str, email_id: str) -> dict:
     """Mark an email as unread (adds the UNREAD label)"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build

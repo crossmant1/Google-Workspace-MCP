@@ -4,7 +4,7 @@ from typing import Optional, Dict
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-from auth import verify_api_key, _get_credentials
+from auth import verify_email, _get_credentials
 from database import log_action, get_user_tokens
 from database import sanitize_drive_query
 
@@ -112,11 +112,11 @@ async def _read_file_content_helper(user_id: str, file_id: str) -> dict:
     
     
 #@mcp.tool()
-async def list_drive_files(api_key: str, max_results: int = 20) -> dict:
+async def list_drive_files(email: str, max_results: int = 20) -> dict:
     """List files from Google Drive"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -143,11 +143,11 @@ async def list_drive_files(api_key: str, max_results: int = 20) -> dict:
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 #@mcp.tool()
-async def search_drive_files(api_key: str, query: str, max_results: int = 10) -> dict:
+async def search_drive_files(email: str, query: str, max_results: int = 10) -> dict:
     """Search for files in Google Drive by name"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -177,11 +177,11 @@ async def search_drive_files(api_key: str, query: str, max_results: int = 10) ->
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 #@mcp.tool()
-async def read_file_by_name(api_key: str, file_name: str) -> dict:
+async def read_file_by_name(email: str, file_name: str) -> dict:
     """Read the contents of a file from Google Drive by searching for its name"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -222,12 +222,12 @@ async def read_file_by_name(api_key: str, file_name: str) -> dict:
         return {"error": str(e), "user_id": user_id, "searched_for": file_name, "traceback": traceback.format_exc()}
 
 #@mcp.tool()
-async def read_file_content(api_key: str, file_id: str) -> dict:
+async def read_file_content(email: str, file_id: str) -> dict:
     """Read the contents of a specific file from Google Drive"""
     # Implementation unchanged
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
     
     try:
         result = await _read_file_content_helper(user_id, file_id)
@@ -238,12 +238,12 @@ async def read_file_content(api_key: str, file_id: str) -> dict:
         return {"error": str(e), "user_id": user_id, "file_id": file_id, "traceback": traceback.format_exc()}
 
 #@mcp.tool()
-async def update_document_content(api_key: str, file_id: str, new_content: str) -> dict:
+async def update_document_content(email: str, file_id: str, new_content: str) -> dict:
     """Update the contents of a Google Docs document"""
     # Implementation unchanged
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google."}
 
     try:
         from googleapiclient.discovery import build
@@ -314,11 +314,11 @@ async def update_document_content(api_key: str, file_id: str, new_content: str) 
         return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
 
 #@mcp.tool()
-async def update_document_by_name(api_key: str, file_name: str, new_content: str) -> dict:
+async def update_document_by_name(email: str, file_name: str, new_content: str) -> dict:
     """Update the contents of a Google Docs document by searching for its name"""
-    user_id = await verify_api_key(api_key)
+    user_id = await verify_email(email)
     if not user_id:
-        return {"error": "Invalid API key"}
+        return {"error": "Invalid email or user not authenticated with Google"}
 
     try:
         from googleapiclient.discovery import build
@@ -336,7 +336,7 @@ async def update_document_by_name(api_key: str, file_name: str, new_content: str
         files = res.get("files", [])
         if not files:
             log_action(user_id, "update_document_by_name", False, "mcp_tool", f"Doc not found: {file_name}")
-            return {"error": "Google Doc not found", "user_id": user_id, "searched_for": file_name}
+            return {"error": "Google Doc not found", "user_id": user_id, "email": email, "searched_for": file_name}
         
         file_id = files[0]["id"]
         
@@ -347,10 +347,10 @@ async def update_document_by_name(api_key: str, file_name: str, new_content: str
         else:
             match_info = {}
             
-        result = await update_document_content(api_key, file_id, new_content)
+        result = await update_document_content(email=email, file_id=file_id, new_content=new_content)  # CHANGE: Add parameter names
         result.update(match_info)
         return result
         
     except Exception as e:
         log_action(user_id, "update_document_by_name", False, "mcp_tool", str(e))
-        return {"error": str(e), "user_id": user_id, "searched_for": file_name, "traceback": traceback.format_exc()}
+        return {"error": str(e), "user_id": user_id, "email": email, "searched_for": file_name, "traceback": traceback.format_exc()}

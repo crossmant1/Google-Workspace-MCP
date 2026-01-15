@@ -17,31 +17,25 @@ def decrypt_token(encrypted_data: str) -> dict:
     decrypted = cipher_suite.decrypt(encrypted_data.encode())
     return json.loads(decrypted.decode())
 
-def hash_api_key(api_key: str) -> str:
-    """Hash API key for storage"""
-    return hashlib.sha256(api_key.encode()).hexdigest()
-
 def sanitize_drive_query(query: str) -> str:
     """Safely escape Drive API query - NO SQL involved, just Drive API query syntax"""
     # For Drive API, we need to escape single quotes by doubling them
     # This is NOT SQL injection - it's Drive API's query language
     return query.replace("'", "''")
 
-def create_user(email: str, display_name: str) -> tuple:
-    """Create a new user and return user_id and api_key"""
+def create_user(email: str, display_name: str) -> str:
+    """Create a new user and return user_id (NO API KEY)"""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         user_id = secrets.token_urlsafe(16)
-        api_key = secrets.token_urlsafe(32)
-        api_key_hash = hash_api_key(api_key)
         
         cursor.execute("""
-            INSERT INTO users (user_id, email, display_name, api_key_hash, created_at, last_login, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, email, display_name, api_key_hash, datetime.utcnow(), datetime.utcnow(), 1))
+            INSERT INTO users (user_id, email, display_name, created_at, last_login, is_active)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, email, display_name, datetime.utcnow(), datetime.utcnow(), 1))
         conn.commit()
-        return user_id, api_key
+        return user_id
     finally:
         cursor.close()
         return_connection(conn)
@@ -60,18 +54,6 @@ def get_user_by_email(email: str) -> Optional[dict]:
                 "is_active": bool(row[3])
             }
         return None
-    finally:
-        cursor.close()
-        return_connection(conn)
-
-def get_user_by_api_key(api_key: str) -> Optional[str]:
-    api_key_hash = hash_api_key(api_key)
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT user_id FROM users WHERE api_key_hash = ? AND is_active = 1", (api_key_hash,))
-        row = cursor.fetchone()
-        return row[0] if row else None
     finally:
         cursor.close()
         return_connection(conn)
