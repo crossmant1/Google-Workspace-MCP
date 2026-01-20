@@ -12,7 +12,14 @@ from database import log_action, get_user_tokens
 
 
 def extract_email_body(payload):
-    """Extract email body with fallback to HTML if plain text not available"""
+    """
+    Description:
+        Extracts the email body from the payload, handling both plain text and HTML content.
+    Args: 
+        payload (dict): The payload of the email message.
+    Returns:
+        The extracted email body.
+    """
     # Try to get plain text first
     if payload.get("mimeType") == "text/plain":
         body_data = payload.get("body", {}).get("data")
@@ -40,7 +47,16 @@ def extract_email_body(payload):
     return None
 
 async def _list_emails_helper(user_id: str, query: Optional[str] = None, max_results: int = 20) -> dict:
-    """Helper for list_emails and search_emails"""
+    """
+    Description:
+        Helper function to list or search emails in Gmail.
+    Args:
+        user_id (str): The Google user ID.
+        query (Optional[str]): The search query. If None, lists recent emails.
+        max_results (int): Maximum number of emails to retrieve. Defaults to 20.
+    Returns:
+        A dictionary containing the result of the email listing or search.
+    """
     try:
         from googleapiclient.discovery import build
         
@@ -101,7 +117,15 @@ async def _list_emails_helper(user_id: str, query: Optional[str] = None, max_res
 
 #@mcp.tool()
 async def list_emails(email: str, max_results: int = 20) -> dict:
-    """List recent emails from Gmail"""
+    """
+    Description:
+        List recent emails in Gmail.
+    Args:
+        email (str): The user's email address.
+        max_results (int): Maximum number of emails to retrieve. Defaults to 20.
+    Returns:
+        A dictionary containing the result of the email listing.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -115,7 +139,16 @@ async def list_emails(email: str, max_results: int = 20) -> dict:
 
 #@mcp.tool()
 async def search_emails(email: str, query: str, max_results: int = 20) -> dict:
-    """Search for emails in Gmail"""
+    """
+    Description:
+        Search for emails in Gmail.
+    Args:
+        email (str): The user's email address.
+        query (str): The search query.
+        max_results (int): Maximum number of emails to retrieve. Defaults to 20.
+    Returns:
+        A dictionary containing the result of the email search.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -129,7 +162,15 @@ async def search_emails(email: str, query: str, max_results: int = 20) -> dict:
 
 #@mcp.tool()
 async def read_email(email: str, email_id: str) -> dict:
-    """Read the full body of a specific email"""
+    """
+    Description:
+        Read a specific email by its ID in Gmail.
+    Args:
+        email (str): The user's email address.
+        email_id (str): The ID of the email to read.
+    Returns:
+        A dictionary containing the email details.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -179,7 +220,19 @@ async def send_email(
     cc: Optional[str] = None,
     bcc: Optional[str] = None
 ) -> dict:
-    """Send an email"""
+    """
+    Description:
+        Send an email via Gmail.
+    Args:
+        email (str): The user's email address.
+        to (str): Recipient email address.
+        subject (str): Subject of the email.
+        body (str): Body content of the email.
+        cc (Optional[str]): CC recipient email address. Defaults to None.
+        bcc (Optional[str]): BCC recipient email address. Defaults to None.
+    Returns:
+        A dictionary containing the result of the email sending operation.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -224,7 +277,15 @@ async def send_email(
 
 #@mcp.tool()
 async def mark_email_as_read(email: str, email_id: str) -> dict:
-    """Mark an email as read (removes the UNREAD label)"""
+    """
+    Description:
+        Mark an email as read (removes the UNREAD label).
+    Args:
+        email (str): The user's email address.
+        email_id (str): The ID of the email to mark as read.
+    Returns:
+        A dictionary containing the result of the operation.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -254,7 +315,15 @@ async def mark_email_as_read(email: str, email_id: str) -> dict:
 
 #@mcp.tool()
 async def mark_email_as_unread(email: str, email_id: str) -> dict:
-    """Mark an email as unread (adds the UNREAD label)"""
+    """
+    Description:
+        Mark an email as unread (adds the UNREAD label).
+    Args:
+        email (str): The user's email address.
+        email_id (str): The ID of the email to mark as unread.
+    Returns:
+        A dictionary containing the result of the operation.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}

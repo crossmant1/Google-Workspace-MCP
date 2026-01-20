@@ -13,7 +13,17 @@ async def list_calendar_events(
     calendar_id: str = "primary",
     timezone: str = None
 ) -> dict:
-    """List upcoming events from Google Calendar"""
+    """
+    Description: 
+        List upcoming events from Google Calendar.
+    Args:
+        email (str): User's email address.
+        max_results (int): Maximum number of events to retrieve.
+        calendar_id (str): The ID of the calendar to fetch events from.
+        timezone (str, optional): Timezone for event times. Defaults to None.
+    Returns:
+        dict: A dictionary containing the list of events or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -80,7 +90,22 @@ async def create_calendar_event(
     calendar_id: str = "primary",
     timezone: str = None
 ) -> dict:
-    """Create a new event in Google Calendar"""
+    """
+    Description:
+        Create a new event in Google Calendar.
+    Args:
+        email (str): User's email address.
+        summary (str): Event title.
+        start_time (str): Event start time in RFC3339 format.
+        end_time (str): Event end time in RFC3339 format.
+        description (str): Event description.
+        location (str): Event location.
+        attendees (str): Comma-separated list of attendee email addresses.
+        calendar_id (str): The ID of the calendar to add the event to.
+        timezone (str, optional): Timezone for event times. Defaults to None.
+    Returns:
+        dict: A dictionary containing the created event details or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -146,7 +171,22 @@ async def update_calendar_event(
     calendar_id: str = "primary",
     timezone: str = None
 ) -> dict:
-    """Update an existing event in Google Calendar"""
+    """
+    Description:
+        Update an existing event in Google Calendar.
+    Args:
+        email (str): User's email address.
+        event_id (str): The ID of the event to update.
+        summary (str): Updated event title.
+        start_time (str): Updated event start time in RFC3339 format.
+        end_time (str): Updated event end time in RFC3339 format.
+        description (str): Updated event description.
+        location (str): Updated event location.
+        calendar_id (str): The ID of the calendar containing the event.
+        timezone (str, optional): Timezone for event times. Defaults to None.
+    Returns:
+        dict: A dictionary containing the updated event details or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -207,7 +247,16 @@ async def delete_calendar_event(
     event_id: str,
     calendar_id: str = "primary"
 ) -> dict:
-    """Delete an event from Google Calendar"""
+    """
+    Description:
+        Delete an event from Google Calendar.
+    Args:
+        email (str): User's email address.
+        event_id (str): The ID of the event to delete.
+        calendar_id (str): The ID of the calendar containing the event.
+    Returns:
+        dict: A dictionary indicating success or containing an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -241,7 +290,17 @@ async def search_calendar_events(
     max_results: int = 10,
     calendar_id: str = "primary"
 ) -> dict:
-    """Search for calendar events matching a query"""
+    """
+    Description:
+        Search for events in Google Calendar matching a query.
+    Args:
+        email (str): User's email address.
+        query (str): Search query string.
+        max_results (int): Maximum number of events to retrieve.
+        calendar_id (str): The ID of the calendar to search events in.
+    Returns:
+        dict: A dictionary containing the list of matching events or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}

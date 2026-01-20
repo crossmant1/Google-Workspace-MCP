@@ -10,7 +10,14 @@ from mcp_tools.tools_gmail import search_emails
 
 #@mcp.tool()
 async def list_task_lists(email: str) -> dict:
-    """List all Google Tasks task lists"""
+    """
+    Description: 
+        Tool that lists the current Tasks divied into lists in a user's Google Tasks account. 
+    Args:
+        email (str): The email address of the user whose tasks are to be listed.
+    Returns:
+        dict: A dictionary containing the list of task lists or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -46,7 +53,16 @@ async def list_tasks(
     task_list_id: str = "@default",
     max_results: int = 20
 ) -> dict:
-    """List tasks from a specific Google Tasks list"""
+    """
+    Description::
+        Tool that lists the tasks in a specified Google Tasks list for a user.
+    Args:
+        email (str): The email address of the user whose tasks are to be listed.
+        task_list_id (str): The ID of the task list to retrieve tasks from. Defaults to "@default".
+        max_results (int): The maximum number of tasks to retrieve. Defaults to 20.
+    Returns:
+        dict: A dictionary containing the list of tasks or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -96,7 +112,18 @@ async def create_task(
     due: str = "",
     task_list_id: str = "@default"
 ) -> dict:
-    """Create a new task in Google Tasks"""
+    """
+    Description::
+        Tool that creates a new task in a specified Google Tasks list for a user.
+    Args:
+        email (str): The email address of the user whose tasks are to be listed.
+        title (str): The title of the task to create.
+        notes (str): The notes for the task. Defaults to an empty string.
+        due (str): The due date for the task. Defaults to an empty string.
+        task_list_id (str): The ID of the task list to create the task in. Defaults to "@default".
+    Returns:
+        dict: A dictionary containing the created task or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -138,7 +165,19 @@ async def create_task(
 
 #@mcp.tool()
 async def create_task_from_email(email: str, email_id: str, task_list_id: str = "@default", include_snippet: bool = True, include_sender: bool = True, mark_email_done: bool = False) -> dict:
-    """Create a Google Task from a Gmail email (mimics Gmail's 'Add to Tasks' button)"""
+    """
+    Description::
+        Tool that creates a new task from an emailin a specified Google Tasks list for a user.
+    Args:
+        email (str): The email address of the user whose tasks are to be listed.
+        email_id (str): The ID of the email to create a task from.
+        task_list_id (str): The ID of the task list to create the task in. Defaults to "@default".
+        include_snippet (bool): Whether to include the email snippet in the task notes. Defaults to True.
+        include_sender (bool): Whether to include sender information in the task notes. Defaults to True.
+        mark_email_done (bool): Whether to mark the email as read after creating the task. Defaults to False.
+    Returns:
+        dict: A dictionary containing the created task or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -267,7 +306,17 @@ async def add_emails_to_tasks(
     task_list_id: str = "@default",
     mark_emails_done: bool = False
 ) -> dict:
-    """Create Google Tasks from multiple Gmail emails at once (bulk operation)"""
+    """
+    Description:
+        Tool that creates tasks from multiple emails in a specified Google Tasks list for a user.
+    Args:
+        email (str): The email address of the user whose tasks are to be listed.
+        email_ids (str): Comma-separated string of email IDs to create tasks from.
+        task_list_id (str): The ID of the task list to create the tasks in. Defaults to "@default".
+        mark_emails_done (bool): Whether to mark the emails as read after creating the tasks. Defaults to False.
+    Returns:
+        dict: A dictionary containing the results of the task creation process.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -327,7 +376,18 @@ async def create_task_from_email_search(
     task_list_id: str = "@default",
     mark_emails_done: bool = False
 ) -> dict:
-    """Search for emails and create tasks from all matching results"""
+    """
+    Description:
+        Tool that searches for emails and creates tasks from all matching results.
+    Args:
+        email (str): The email address of the user whose tasks are to be listed.
+        search_query (str): The Gmail search query to find matching emails.
+        max_emails (int): Maximum number of emails to process. Defaults to 5.
+        task_list_id (str): The ID of the task list to create the tasks in. Defaults to "@default".
+        mark_emails_done (bool): Whether to mark the emails as read after creating the tasks. Defaults to False.
+    Returns:
+        dict: A dictionary containing the results of the task creation process.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -386,7 +446,19 @@ async def update_task(
     due: str = "",
     task_list_id: str = "@default"
 ) -> dict:
-    """Update an existing task in Google Tasks"""
+    """
+    Description:
+        Tool that updates an existing task in a specified Google Tasks list for a user.
+    Args:  
+        email (str): The email address of the user whose tasks are to be listed.
+        task_id (str): The ID of the task to update.
+        title (str): The new title for the task. Defaults to an empty string.
+        notes (str): The new notes for the task. Defaults to an empty string.
+        due (str): The new due date for the task. Defaults to an empty string.
+        task_list_id (str): The ID of the task list containing the task. Defaults to "@default".
+    Returns:
+        dict: A dictionary containing the updated task or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -432,7 +504,16 @@ async def complete_task(
     task_id: str,
     task_list_id: str = "@default"
 ) -> dict:
-    """Mark a task as completed"""
+    """
+    Description:
+        Tool that marks a task as completed in a specified Google Tasks list for a user.
+    Args:
+        email (str): The email address of the user whose tasks are to be listed.
+        task_id (str): The ID of the task to mark as completed.
+        task_list_id (str): The ID of the task list containing the task. Defaults to "@default".
+    Returns:
+        dict: A dictionary containing the completion status or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -470,7 +551,16 @@ async def delete_task(
     task_id: str,
     task_list_id: str = "@default"
 ) -> dict:
-    """Delete a task from Google Tasks"""
+    """
+    Description:
+        Tool that deletes a task from a specified Google Tasks list for a user.
+    Args:
+        email (str): The email address of the user whose tasks are to be listed.
+        task_id (str): The ID of the task to delete.
+        task_list_id (str): The ID of the task list containing the task. Defaults to "@default".
+    Returns:
+        dict: A dictionary containing the deletion status or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -499,7 +589,14 @@ async def delete_task(
 
 #@mcp.tool()
 async def get_auth_status(email: str) -> dict:
-    """Check the authentication status and return user info"""
+    """
+    Description:
+        Tool that checks the authentication status and returns user information.
+    Args:
+        email (str): The email address of the user whose authentication status is to be checked.
+    Returns:
+        dict: A dictionary containing the authentication status or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"authenticated": False, "error": "Invalid email or user not authenticated with Google."}

@@ -12,7 +12,15 @@ from database import sanitize_drive_query
 # --- HELPER FUNCTIONS ---
 
 async def _read_file_content_helper(user_id: str, file_id: str) -> dict:
-    """Helper function to read file content - used by multiple tools"""
+    """
+    Description:
+        Helper function to read file content from Google Drive.
+    Args:
+        user_id (str): The user ID associated with the Google account.
+        file_id (str): The ID of the file to read.
+    Returns:
+        A dictionary containing the file content or an error message.
+    """
     try:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaIoBaseDownload
@@ -113,7 +121,15 @@ async def _read_file_content_helper(user_id: str, file_id: str) -> dict:
     
 #@mcp.tool()
 async def list_drive_files(email: str, max_results: int = 20) -> dict:
-    """List files from Google Drive"""
+    """
+    Description:
+        List files in Google Drive. 
+    Args:
+        email (str): The email of the user whose Drive files to list.
+        max_results (int): Maximum number of files to return (default 20, max 100).
+    Returns:
+        A dictionary containing the list of files or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -144,7 +160,16 @@ async def list_drive_files(email: str, max_results: int = 20) -> dict:
 
 #@mcp.tool()
 async def search_drive_files(email: str, query: str, max_results: int = 10) -> dict:
-    """Search for files in Google Drive by name"""
+    """
+    Description:
+        Search for files in Google Drive matching a query.
+    Args:  
+        email (str): The email of the user whose Drive files to search.
+        query (str): The search query string.
+        max_results (int): Maximum number of files to return (default 10, max 100).
+    Returns:
+        A dictionary containing the search results or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -178,7 +203,15 @@ async def search_drive_files(email: str, query: str, max_results: int = 10) -> d
 
 #@mcp.tool()
 async def read_file_by_name(email: str, file_name: str) -> dict:
-    """Read the contents of a file from Google Drive by searching for its name"""
+    """
+    Description:
+        Read the contents of a specific file from Google Drive by searching for its name.
+    Args:
+        email (str): The email of the user whose Drive file to read.
+        file_name (str): The name of the file to read.
+    Returns:
+        A dictionary containing the file content or an error message.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -223,7 +256,15 @@ async def read_file_by_name(email: str, file_name: str) -> dict:
 
 #@mcp.tool()
 async def read_file_content(email: str, file_id: str) -> dict:
-    """Read the contents of a specific file from Google Drive"""
+    """
+    Description:
+        Read the contents of a specific file from Google Drive by its file ID.
+    Args:
+        email (str): The email of the user whose Drive file to read.
+        file_id (str): The ID of the file to read.
+    Returns:
+        A dictionary containing the file content or an error message.
+    """
     # Implementation unchanged
     user_id = await verify_email(email)
     if not user_id:
@@ -239,7 +280,16 @@ async def read_file_content(email: str, file_id: str) -> dict:
 
 #@mcp.tool()
 async def update_document_content(email: str, file_id: str, new_content: str) -> dict:
-    """Update the contents of a Google Docs document"""
+    """
+    Description:
+        Update the contents of a Google Docs document.
+    Args:
+        email (str): The email of the user whose Google Doc to update.
+        file_id (str): The ID of the Google Doc to update.
+        new_content (str): The new content to insert into the document.
+    Returns:
+        A dictionary indicating success or failure of the update operation.
+    """
     # Implementation unchanged
     user_id = await verify_email(email)
     if not user_id:
@@ -315,7 +365,16 @@ async def update_document_content(email: str, file_id: str, new_content: str) ->
 
 #@mcp.tool()
 async def update_document_by_name(email: str, file_name: str, new_content: str) -> dict:
-    """Update the contents of a Google Docs document by searching for its name"""
+    """
+    Description:
+        Update the contents of a Google Docs document by searching for its name.
+    Args:
+        email (str): The email of the user whose Google Doc to update.
+        file_name (str): The name of the Google Doc to update.
+        new_content (str): The new content to insert into the document.
+    Returns:
+        A dictionary indicating success or failure of the update operation.
+    """
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google"}
