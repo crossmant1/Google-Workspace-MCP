@@ -13,17 +13,17 @@ import requests
 import traceback
 from datetime import datetime, timedelta
 
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount  
 from starlette.responses import JSONResponse, HTMLResponse
 from starlette.requests import Request
 
-import config
-import database
-import auth
+import mcpserver.config
+import mcpserver.database
+import mcpserver.auth
 
-from mcp_tools import tools_drive, tools_gmail, tools_calendar, tools_tasks
+from mcpserver.mcp_tools import tools_drive, tools_gmail, tools_calendar, tools_tasks
 
 from config import CLIENT_ID, CLIENT_SECRET, SCOPES, REDIRECT_URI
 from database import (
@@ -42,7 +42,7 @@ from starlette.responses import JSONResponse as StarletteJSONResponse
 # import tools_tasks 
 
 # Initialize MCP
-mcp = FastMCP("Google Drive, Gmail, Calendar & Tasks MCP")
+mcp = FastMCP("Google Drive, Gmail, Calendar & Tasks MCP", host="127.0.0.1", port=8000)
 
 # --- Register Drive Tools ---
 mcp.tool()(tools_drive.list_drive_files)
