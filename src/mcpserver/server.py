@@ -13,15 +13,16 @@ import requests
 import traceback
 from datetime import datetime, timedelta
 
+from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount  
 from starlette.responses import JSONResponse, HTMLResponse
 from starlette.requests import Request
 
-import mcpserver.config
-import mcpserver.database
-import mcpserver.auth
+import mcpserver.config as config
+import mcpserver.database as database
+import mcpserver.auth as auth
 
 from mcpserver.mcp_tools import tools_drive, tools_gmail, tools_calendar, tools_tasks
 
@@ -40,7 +41,6 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import JSONResponse as StarletteJSONResponse
 
 # import tools_tasks 
-
 # Initialize MCP
 mcp = FastMCP("Google Drive, Gmail, Calendar & Tasks MCP", host="127.0.0.1", port=8000)
 
@@ -86,9 +86,6 @@ mcp.tool()(tools_tasks.get_auth_status)
 
 # --- Register Auth Tool ---
 mcp.tool()(auth.check_google_auth)
-
-# --- Starlette App & OAuth Routes ---
-mcp_asgi = mcp.http_app(path='/mcp')
 
 async def start_auth(request: StarletteRequest):
     """Start the Google OAuth2 flow with email parameter"""
@@ -438,9 +435,7 @@ app = Starlette(
         Route("/oauth2callback", oauth_callback),
         Route("/check-auth", check_auth_status, methods=["GET"]),  # NEW
         Route("/health", health),
-        Mount("/", mcp_asgi),
     ],
-    lifespan=mcp_asgi.lifespan,
 )
 
 if __name__ == "__main__":
