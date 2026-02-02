@@ -4,9 +4,9 @@ from typing import Optional, Dict
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-from auth import verify_email, _get_credentials
-from database import log_action, get_user_tokens
-from database import sanitize_drive_query
+from mcpserver.auth import verify_email, _get_credentials
+from mcpserver.database import log_action, get_user_tokens
+from mcpserver.database import sanitize_drive_query
 
 
 # --- HELPER FUNCTIONS ---

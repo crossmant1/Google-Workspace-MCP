@@ -2,7 +2,7 @@ import secrets
 import json
 from datetime import datetime, timedelta
 from typing import Optional
-from config import get_db_connection, return_connection, cipher_suite
+from mcpserver.config import get_db_connection, return_connection, cipher_suite
 
 # Security helper functions
 def encrypt_token(token_data: dict) -> str:

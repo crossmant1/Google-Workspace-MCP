@@ -26,8 +26,8 @@ import mcpserver.auth as auth
 
 from mcpserver.mcp_tools import tools_drive, tools_gmail, tools_calendar, tools_tasks
 
-from config import CLIENT_ID, CLIENT_SECRET, SCOPES, REDIRECT_URI
-from database import (
+from mcpserver.config import CLIENT_ID, CLIENT_SECRET, SCOPES, REDIRECT_URI
+from mcpserver.database import (
     create_user, 
     get_user_by_email, 
     store_tokens, 
@@ -86,6 +86,8 @@ mcp.tool()(tools_tasks.get_auth_status)
 
 # --- Register Auth Tool ---
 mcp.tool()(auth.check_google_auth)
+
+app= mcp.streamable_http_app()
 
 async def start_auth(request: StarletteRequest):
     """Start the Google OAuth2 flow with email parameter"""
@@ -379,7 +381,7 @@ async def check_auth_status(request: StarletteRequest):
             {"error": str(e), "traceback": traceback.format_exc()}, 
             status_code=500
         )
-    
+@app.route("/health", methods=["GET"])
 async def health(request: StarletteRequest):
     """Health check endpoint, including DB connection"""
     try:
@@ -426,17 +428,18 @@ async def root(request: StarletteRequest):
             "note": "No API keys needed - just use email in all tool calls"
         }
     })
+
     
-app = Starlette(
-    routes=[
-        Route("/", root),
-        Route("/start-auth", auth_page),
-        Route("/auth", start_auth),
-        Route("/oauth2callback", oauth_callback),
-        Route("/check-auth", check_auth_status, methods=["GET"]),  # NEW
-        Route("/health", health),
-    ],
-)
+#app = Starlette(
+#    routes=[
+#        Route("/", root),
+#        Route("/start-auth", auth_page),
+#        Route("/auth", start_auth),
+#        Route("/oauth2callback", oauth_callback),
+#        Route("/check-auth", check_auth_status, methods=["GET"]),  # NEW
+#        Route("/health", health),
+#    ],
+#)
 
 if __name__ == "__main__":
     mcp.run()

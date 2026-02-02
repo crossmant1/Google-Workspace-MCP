@@ -4,8 +4,8 @@ from datetime import datetime
 from typing import Optional
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-import database
-import config
+import mcpserver.database as database
+import mcpserver.config as config
 
 async def verify_email(email: Optional[str]) -> Optional[str]:
     """Verify email and return user_id if user exists and has valid tokens"""

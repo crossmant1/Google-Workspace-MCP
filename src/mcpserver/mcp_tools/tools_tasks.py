@@ -3,9 +3,9 @@ from typing import Optional, Dict
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from auth import verify_email, _get_credentials
-from database import log_action, get_user_tokens
-from mcp_tools.tools_gmail import search_emails
+from mcpserver.auth import verify_email, _get_credentials
+from mcpserver.database import log_action, get_user_tokens
+from mcpserver.mcp_tools.tools_gmail import search_emails
 
 
 #@mcp.tool()

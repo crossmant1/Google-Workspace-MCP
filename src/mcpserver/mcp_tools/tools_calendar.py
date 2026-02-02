@@ -2,13 +2,16 @@ from datetime import datetime, timedelta
 import traceback
 from typing import Optional, Dict
 from googleapiclient.discovery import build
+from mcp.server.fastmcp import Context
 
-from auth import verify_email, _get_credentials
-import auth, database, config
+import mcpserver.auth as auth
+from mcpserver.auth import verify_email
+import mcpserver.database as database
+import mcpserver.config as config
 
 #@mcp.tool()
 async def list_calendar_events(
-    email: str,
+    context: Context,
     max_results: int = 10,
     calendar_id: str = "primary",
     timezone: str = None
@@ -24,6 +27,7 @@ async def list_calendar_events(
     Returns:
         dict: A dictionary containing the list of events or an error message.
     """
+    email = context.request_context.request.headers.get("email")
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
