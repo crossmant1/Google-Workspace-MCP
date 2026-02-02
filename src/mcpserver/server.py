@@ -386,8 +386,9 @@ async def health(request: StarletteRequest):
     """Health check endpoint, including DB connection"""
     try:
         conn = get_db_connection()
-        cursor = conn.cursor()
+        cursor = conn.cursor(buffered=True)
         cursor.execute("SELECT 1")
+        cursor.fetchall()
         cursor.close()
         return_connection(conn)
         db_status = "connected"
