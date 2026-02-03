@@ -89,6 +89,7 @@ mcp.tool()(auth.check_google_auth)
 
 app= mcp.streamable_http_app()
 
+@app.route("/auth", methods=["GET"])
 async def start_auth(request: StarletteRequest):
     """Start the Google OAuth2 flow with email parameter"""
     from google_auth_oauthlib.flow import Flow
@@ -133,7 +134,7 @@ async def start_auth(request: StarletteRequest):
         "message": "Visit auth_url to complete Google authentication"
     })
 
-    
+@app.route("/start-auth", methods=["GET"])    
 async def auth_page(request: StarletteRequest):
     """HTML page to initiate OAuth flow - requires email input"""
     html_content = """
@@ -218,6 +219,7 @@ async def auth_page(request: StarletteRequest):
     """
     return HTMLResponse(content=html_content)
 
+@app.route("/oauth2callback", methods=["GET"])
 async def oauth_callback(request: StarletteRequest):
     """Handle the OAuth2 callback from Google - NO API KEY RETURNED"""
     from google_auth_oauthlib.flow import Flow
@@ -324,7 +326,8 @@ async def oauth_callback(request: StarletteRequest):
             "error": str(e), 
             "traceback": traceback.format_exc()
         }, status_code=500)
-    
+
+@app.route("/check-auth", methods=["GET"])
 async def check_auth_status(request: StarletteRequest):
     """Check if a user's email is authenticated in the database"""
     try:
@@ -400,6 +403,7 @@ async def health(request: StarletteRequest):
         "database": db_status
     })
 
+@app.route("/", methods=["GET"])
 async def root(request: StarletteRequest):
     """Root endpoint with updated documentation"""
     return StarletteJSONResponse({

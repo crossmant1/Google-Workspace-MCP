@@ -22,18 +22,20 @@ def sanitize_drive_query(query: str) -> str:
     # This is NOT SQL injection - it's Drive API's query language
     return query.replace("'", "''")
 
-def create_user(email: str, display_name: str) -> str:
+def create_user(email: str, display_name: str) -> int:
     """Create a new user and return user_id (NO API KEY)"""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        user_id = secrets.token_urlsafe(16)
-        
+        # Let the database auto-generate the ID
         cursor.execute("""
-            INSERT INTO users (user_id, email, display_name, created_at, last_login, is_active)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (user_id, email, display_name, datetime.utcnow(), datetime.utcnow(), 1))
+            INSERT INTO users (email, display_name, created_at, last_login, is_active)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (email, display_name, datetime.utcnow(), datetime.utcnow(), 1))
         conn.commit()
+        
+        # Get the auto-generated ID
+        user_id = cursor.lastrowid
         return user_id
     finally:
         cursor.close()

@@ -117,9 +117,9 @@ async def create_task(
         Tool that creates a new task in a specified Google Tasks list for a user.
     Args:
         email (str): The email address of the user whose tasks are to be listed.
-        title (str): The title of the task to create.
+        title (str): The title of the task to create
         notes (str): The notes for the task. Defaults to an empty string.
-        due (str): The due date for the task. Defaults to an empty string.
+        due (str): The due date for the task. Defaults to an empty string, in RFC3339 format. The time should always be midnight. 
         task_list_id (str): The ID of the task list to create the task in. Defaults to "@default".
     Returns:
         dict: A dictionary containing the created task or an error message.

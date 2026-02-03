@@ -8,6 +8,7 @@ dependencies = [
     "config>=0.5.1",
     "google-api-python-client>=2.188.0",
     "google-auth>=2.48.0",
+    "google-auth-oauthlib>=1.2.4",
     "mcp[cli]>=1.26.0",
     "mysql-connector-python>=9.5.0",
     "requests>=2.32.5",
