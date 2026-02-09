@@ -2,16 +2,19 @@ from datetime import datetime, timedelta
 import traceback
 from typing import Optional, Dict
 from googleapiclient.discovery import build
+from mcp.server.fastmcp import Context
 
-from auth import verify_email, _get_credentials
-import auth, database, config
+import mcpserver.auth as auth
+from mcpserver.auth import verify_email
+import mcpserver.database as database
+import mcpserver.config as config
 
 #@mcp.tool()
 async def list_calendar_events(
-    email: str,
+    context: Context,
     max_results: int = 10,
     calendar_id: str = "primary",
-    timezone: str = None
+    timezone: str = "America/New_York"
 ) -> dict:
     """
     Description: 
@@ -20,10 +23,11 @@ async def list_calendar_events(
         email (str): User's email address.
         max_results (int): Maximum number of events to retrieve.
         calendar_id (str): The ID of the calendar to fetch events from.
-        timezone (str, optional): Timezone for event times. Defaults to None.
+        timezone (str, optional): Timezone for event times. Defaults to America/New_York.
     Returns:
         dict: A dictionary containing the list of events or an error message.
     """
+    email = context.request_context.request.headers.get("email")
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -88,7 +92,7 @@ async def create_calendar_event(
     location: str = "",
     attendees: str = "",
     calendar_id: str = "primary",
-    timezone: str = None
+    timezone: str = "America/New_York"
 ) -> dict:
     """
     Description:
@@ -102,7 +106,7 @@ async def create_calendar_event(
         location (str): Event location.
         attendees (str): Comma-separated list of attendee email addresses.
         calendar_id (str): The ID of the calendar to add the event to.
-        timezone (str, optional): Timezone for event times. Defaults to None.
+        timezone (str, optional): Timezone for event times. Defaults to America/New_York.
     Returns:
         dict: A dictionary containing the created event details or an error message.
     """
@@ -169,7 +173,7 @@ async def update_calendar_event(
     description: str = "",
     location: str = "",
     calendar_id: str = "primary",
-    timezone: str = None
+    timezone: str = "America/New_York"
 ) -> dict:
     """
     Description:
@@ -183,7 +187,7 @@ async def update_calendar_event(
         description (str): Updated event description.
         location (str): Updated event location.
         calendar_id (str): The ID of the calendar containing the event.
-        timezone (str, optional): Timezone for event times. Defaults to None.
+        timezone (str, optional): Timezone for event times. Defaults to America/New_York.
     Returns:
         dict: A dictionary containing the updated event details or an error message.
     """

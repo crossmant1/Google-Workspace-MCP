@@ -4,9 +4,9 @@ from typing import Optional, Dict
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-from auth import verify_email, _get_credentials
-from database import log_action, get_user_tokens
-from database import sanitize_drive_query
+from mcpserver.auth import verify_email, _get_credentials
+from mcpserver.database import log_action, get_user_tokens
+from mcpserver.database import sanitize_drive_query
 
 
 # --- HELPER FUNCTIONS ---
@@ -265,7 +265,6 @@ async def read_file_content(email: str, file_id: str) -> dict:
     Returns:
         A dictionary containing the file content or an error message.
     """
-    # Implementation unchanged
     user_id = await verify_email(email)
     if not user_id:
         return {"error": "Invalid email or user not authenticated with Google."}
@@ -277,139 +276,3 @@ async def read_file_content(email: str, file_id: str) -> dict:
     except Exception as e:
         log_action(user_id, "read_file_content", False, "mcp_tool", str(e))
         return {"error": str(e), "user_id": user_id, "file_id": file_id, "traceback": traceback.format_exc()}
-
-#@mcp.tool()
-async def update_document_content(email: str, file_id: str, new_content: str) -> dict:
-    """
-    Description:
-        Update the contents of a Google Docs document.
-    Args:
-        email (str): The email of the user whose Google Doc to update.
-        file_id (str): The ID of the Google Doc to update.
-        new_content (str): The new content to insert into the document.
-    Returns:
-        A dictionary indicating success or failure of the update operation.
-    """
-    # Implementation unchanged
-    user_id = await verify_email(email)
-    if not user_id:
-        return {"error": "Invalid email or user not authenticated with Google."}
-
-    try:
-        from googleapiclient.discovery import build
-        from googleapiclient.errors import HttpError
-
-        creds = _get_credentials(user_id)
-        drive_service = build("drive", "v3", credentials=creds)
-        docs_service = build("docs", "v1", credentials=creds)
-        
-        file_metadata = drive_service.files().get(
-            fileId=file_id,
-            fields="name,mimeType"
-        ).execute()
-        
-        if file_metadata.get("mimeType") != "application/vnd.google-apps.document":
-            log_action(user_id, "update_document_content", False, "mcp_tool", "File is not a Google Doc")
-            return {"error": "File is not a Google Doc", "user_id": user_id, "file_id": file_id, "mimeType": file_metadata.get("mimeType")}
-
-        doc = docs_service.documents().get(documentId=file_id).execute()
-        content_length = doc.get("body", {}).get("content", [])[-1].get("endIndex", 1) - 1
-
-        requests_payload = []
-        if content_length > 1:
-            requests_payload.append({
-                'deleteContentRange': {
-                    'range': {
-                        'startIndex': 1,
-                        'endIndex': content_length
-                    }
-                }
-            })
-        
-        requests_payload.append({
-            'insertText': {
-                'location': {
-                    'index': 1
-                },
-                'text': new_content
-            }
-        })
-        
-        result = docs_service.documents().batchUpdate(
-            documentId=file_id,
-            body={'requests': requests_payload}
-        ).execute()
-        
-        log_action(user_id, "update_document_content", True, "mcp_tool", f"File: {file_id}")
-        return {
-            "success": True,
-            "user_id": user_id,
-            "file_id": file_id,
-            "name": file_metadata["name"],
-            "message": "Document updated successfully",
-            "content_length": len(new_content)
-        }
-
-    except HttpError as e:
-        log_action(user_id, "update_document_content", False, "mcp_tool", str(e))
-        return {
-            "error_type": "HttpError",
-            "status_code": e.resp.status,
-            "error": str(e),
-            "user_id": user_id,
-            "file_id": file_id
-        }
-    except Exception as e:
-        log_action(user_id, "update_document_content", False, "mcp_tool", str(e))
-        return {"error": str(e), "user_id": user_id, "traceback": traceback.format_exc()}
-
-#@mcp.tool()
-async def update_document_by_name(email: str, file_name: str, new_content: str) -> dict:
-    """
-    Description:
-        Update the contents of a Google Docs document by searching for its name.
-    Args:
-        email (str): The email of the user whose Google Doc to update.
-        file_name (str): The name of the Google Doc to update.
-        new_content (str): The new content to insert into the document.
-    Returns:
-        A dictionary indicating success or failure of the update operation.
-    """
-    user_id = await verify_email(email)
-    if not user_id:
-        return {"error": "Invalid email or user not authenticated with Google"}
-
-    try:
-        from googleapiclient.discovery import build
-
-        creds = _get_credentials(user_id)
-        service = build("drive", "v3", credentials=creds)
-        
-        safe_name = sanitize_drive_query(file_name)
-        res = service.files().list(
-            q=f"name = '{safe_name}' and mimeType = 'application/vnd.google-apps.document'",
-            pageSize=5,
-            fields="files(id,name)"
-        ).execute()
-        
-        files = res.get("files", [])
-        if not files:
-            log_action(user_id, "update_document_by_name", False, "mcp_tool", f"Doc not found: {file_name}")
-            return {"error": "Google Doc not found", "user_id": user_id, "email": email, "searched_for": file_name}
-        
-        file_id = files[0]["id"]
-        
-        if len(files) > 1:
-            match_info = {
-                "note": f"Found {len(files)} matching docs, updating the first one: '{files[0]['name']}'"
-            }
-        else:
-            match_info = {}
-            
-        result = await update_document_content(email=email, file_id=file_id, new_content=new_content)  # CHANGE: Add parameter names
-        result.update(match_info)
-        return result
-        
-    except Exception as e:
-        log_action(user_id, "update_document_by_name", False, "mcp_tool", str(e))
-        return {"error": str(e), "user_id": user_id, "email": email, "searched_for": file_name, "traceback": traceback.format_exc()}

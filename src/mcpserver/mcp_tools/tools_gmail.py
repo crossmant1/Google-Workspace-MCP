@@ -6,8 +6,8 @@ from typing import Optional, Dict
 from email.mime.text import MIMEText
 from googleapiclient.discovery import build
 
-from auth import verify_email, _get_credentials
-from database import log_action, get_user_tokens
+from mcpserver.auth import verify_email, _get_credentials
+from mcpserver.database import log_action, get_user_tokens
 
 
 

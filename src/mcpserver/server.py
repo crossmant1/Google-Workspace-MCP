@@ -13,20 +13,21 @@ import requests
 import traceback
 from datetime import datetime, timedelta
 
+from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount  
 from starlette.responses import JSONResponse, HTMLResponse
 from starlette.requests import Request
 
-import mcpserver.config
-import mcpserver.database
-import mcpserver.auth
+import mcpserver.config as config
+import mcpserver.database as database
+import mcpserver.auth as auth
 
-from mcpserver.mcp_tools import tools_drive, tools_gmail, tools_calendar, tools_tasks
+from mcpserver.mcp_tools import tools_drive, tools_gmail, tools_calendar, tools_tasks, tools_docs, tools_slides
 
-from config import CLIENT_ID, CLIENT_SECRET, SCOPES, REDIRECT_URI
-from database import (
+from mcpserver.config import CLIENT_ID, CLIENT_SECRET, SCOPES, REDIRECT_URI
+from mcpserver.database import (
     create_user, 
     get_user_by_email, 
     store_tokens, 
@@ -40,7 +41,6 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import JSONResponse as StarletteJSONResponse
 
 # import tools_tasks 
-
 # Initialize MCP
 mcp = FastMCP("Google Drive, Gmail, Calendar & Tasks MCP", host="127.0.0.1", port=8000)
 
@@ -49,8 +49,6 @@ mcp.tool()(tools_drive.list_drive_files)
 mcp.tool()(tools_drive.search_drive_files)
 mcp.tool()(tools_drive.read_file_by_name)
 mcp.tool()(tools_drive.read_file_content)
-mcp.tool()(tools_drive.update_document_content)
-mcp.tool()(tools_drive.update_document_by_name)
 
 # --- Register Gmail Tools ---
 mcp.tool()(tools_gmail.list_emails)
@@ -78,18 +76,38 @@ mcp.tool()(tools_tasks.update_task)
 mcp.tool()(tools_tasks.complete_task)
 mcp.tool()(tools_tasks.delete_task)
 
+# --- Register Docs Tools ---
+mcp.tool()(tools_docs.update_document_content)
+mcp.tool()(tools_docs.update_document_by_name)
+mcp.tool()(tools_docs.create_document)
+mcp.tool()(tools_docs.delete_document)
+mcp.tool()(tools_docs.delete_document_by_name)
+mcp.tool()(tools_docs.append_to_document)
+mcp.tool()(tools_docs.append_to_document_by_name)
+mcp.tool()(tools_docs.insert_text_at_position)
+mcp.tool()(tools_docs.rename_document)
+
+# --- Register Slides Tools ---
+mcp.tool()(tools_slides.read_presentation)
+mcp.tool()(tools_slides.list_slides)
+mcp.tool()(tools_slides.delete_presentation)
+mcp.tool()(tools_slides.rename_presentation)
+mcp.tool()(tools_slides.duplicate_presentation)
+mcp.tool()(tools_slides.get_presentation_metadata)
+mcp.tool()(tools_slides.export_presentation_as_pdf)
+
 # --- Compound Tools ---
 mcp.tool()(tools_tasks.create_task_from_email)
 mcp.tool()(tools_tasks.add_emails_to_tasks)
 mcp.tool()(tools_tasks.create_task_from_email_search)
 mcp.tool()(tools_tasks.get_auth_status)
 
-# --- Register Auth Tool ---
+# --- Register Auth Tools ---
 mcp.tool()(auth.check_google_auth)
 
-# --- Starlette App & OAuth Routes ---
-mcp_asgi = mcp.http_app(path='/mcp')
+app= mcp.streamable_http_app()
 
+@app.route("/auth", methods=["GET"])
 async def start_auth(request: StarletteRequest):
     """Start the Google OAuth2 flow with email parameter"""
     from google_auth_oauthlib.flow import Flow
@@ -134,7 +152,7 @@ async def start_auth(request: StarletteRequest):
         "message": "Visit auth_url to complete Google authentication"
     })
 
-    
+@app.route("/start-auth", methods=["GET"])    
 async def auth_page(request: StarletteRequest):
     """HTML page to initiate OAuth flow - requires email input"""
     html_content = """
@@ -219,6 +237,7 @@ async def auth_page(request: StarletteRequest):
     """
     return HTMLResponse(content=html_content)
 
+@app.route("/oauth2callback", methods=["GET"])
 async def oauth_callback(request: StarletteRequest):
     """Handle the OAuth2 callback from Google - NO API KEY RETURNED"""
     from google_auth_oauthlib.flow import Flow
@@ -325,7 +344,8 @@ async def oauth_callback(request: StarletteRequest):
             "error": str(e), 
             "traceback": traceback.format_exc()
         }, status_code=500)
-    
+
+@app.route("/check-auth", methods=["GET"])
 async def check_auth_status(request: StarletteRequest):
     """Check if a user's email is authenticated in the database"""
     try:
@@ -382,13 +402,14 @@ async def check_auth_status(request: StarletteRequest):
             {"error": str(e), "traceback": traceback.format_exc()}, 
             status_code=500
         )
-    
+@app.route("/health", methods=["GET"])
 async def health(request: StarletteRequest):
     """Health check endpoint, including DB connection"""
     try:
         conn = get_db_connection()
-        cursor = conn.cursor()
+        cursor = conn.cursor(buffered=True)
         cursor.execute("SELECT 1")
+        cursor.fetchall()
         cursor.close()
         return_connection(conn)
         db_status = "connected"
@@ -400,6 +421,7 @@ async def health(request: StarletteRequest):
         "database": db_status
     })
 
+@app.route("/", methods=["GET"])
 async def root(request: StarletteRequest):
     """Root endpoint with updated documentation"""
     return StarletteJSONResponse({
@@ -429,19 +451,18 @@ async def root(request: StarletteRequest):
             "note": "No API keys needed - just use email in all tool calls"
         }
     })
+
     
-app = Starlette(
-    routes=[
-        Route("/", root),
-        Route("/start-auth", auth_page),
-        Route("/auth", start_auth),
-        Route("/oauth2callback", oauth_callback),
-        Route("/check-auth", check_auth_status, methods=["GET"]),  # NEW
-        Route("/health", health),
-        Mount("/", mcp_asgi),
-    ],
-    lifespan=mcp_asgi.lifespan,
-)
+#app = Starlette(
+#    routes=[
+#        Route("/", root),
+#        Route("/start-auth", auth_page),
+#        Route("/auth", start_auth),
+#        Route("/oauth2callback", oauth_callback),
+#        Route("/check-auth", check_auth_status, methods=["GET"]),  # NEW
+#        Route("/health", health),
+#    ],
+#)
 
 if __name__ == "__main__":
     mcp.run()
