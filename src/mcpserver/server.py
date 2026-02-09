@@ -24,7 +24,7 @@ import mcpserver.config as config
 import mcpserver.database as database
 import mcpserver.auth as auth
 
-from mcpserver.mcp_tools import tools_drive, tools_gmail, tools_calendar, tools_tasks
+from mcpserver.mcp_tools import tools_drive, tools_gmail, tools_calendar, tools_tasks, tools_docs, tools_slides
 
 from mcpserver.config import CLIENT_ID, CLIENT_SECRET, SCOPES, REDIRECT_URI
 from mcpserver.database import (
@@ -49,8 +49,6 @@ mcp.tool()(tools_drive.list_drive_files)
 mcp.tool()(tools_drive.search_drive_files)
 mcp.tool()(tools_drive.read_file_by_name)
 mcp.tool()(tools_drive.read_file_content)
-mcp.tool()(tools_drive.update_document_content)
-mcp.tool()(tools_drive.update_document_by_name)
 
 # --- Register Gmail Tools ---
 mcp.tool()(tools_gmail.list_emails)
@@ -78,13 +76,33 @@ mcp.tool()(tools_tasks.update_task)
 mcp.tool()(tools_tasks.complete_task)
 mcp.tool()(tools_tasks.delete_task)
 
+# --- Register Docs Tools ---
+mcp.tool()(tools_docs.update_document_content)
+mcp.tool()(tools_docs.update_document_by_name)
+mcp.tool()(tools_docs.create_document)
+mcp.tool()(tools_docs.delete_document)
+mcp.tool()(tools_docs.delete_document_by_name)
+mcp.tool()(tools_docs.append_to_document)
+mcp.tool()(tools_docs.append_to_document_by_name)
+mcp.tool()(tools_docs.insert_text_at_position)
+mcp.tool()(tools_docs.rename_document)
+
+# --- Register Slides Tools ---
+mcp.tool()(tools_slides.read_presentation)
+mcp.tool()(tools_slides.list_slides)
+mcp.tool()(tools_slides.delete_presentation)
+mcp.tool()(tools_slides.rename_presentation)
+mcp.tool()(tools_slides.duplicate_presentation)
+mcp.tool()(tools_slides.get_presentation_metadata)
+mcp.tool()(tools_slides.export_presentation_as_pdf)
+
 # --- Compound Tools ---
 mcp.tool()(tools_tasks.create_task_from_email)
 mcp.tool()(tools_tasks.add_emails_to_tasks)
 mcp.tool()(tools_tasks.create_task_from_email_search)
 mcp.tool()(tools_tasks.get_auth_status)
 
-# --- Register Auth Tool ---
+# --- Register Auth Tools ---
 mcp.tool()(auth.check_google_auth)
 
 app= mcp.streamable_http_app()
