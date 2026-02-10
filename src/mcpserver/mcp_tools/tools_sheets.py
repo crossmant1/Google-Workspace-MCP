@@ -44,14 +44,14 @@ async def _get_spreadsheet_id_by_name(user_id: str, file_name: str) -> dict:
 
 
 #@mcp.tool()
-async def read_spreadsheet(email: str, file_name: str, sheet_name: str = None) -> dict:
+async def read_spreadsheet(email: str, file_name: str, sheet_name: str = "Sheet1") -> dict:
     """
     Description:
         Read the contents of a Google Sheets spreadsheet. If sheet_name is provided, reads that sheet; otherwise reads the first sheet.
     Args:
         email (str): The email of the user whose spreadsheet to read.
         file_name (str): The name of the spreadsheet to read.
-        sheet_name (str): Optional name of the specific sheet to read. If not provided, reads the first sheet.
+        sheet_name (str): Optional name of the specific sheet to read. Defaults, to Sheet1. 
     Returns:
         A dictionary containing the spreadsheet data or an error message.
     """
@@ -427,7 +427,7 @@ async def update_range(email: str, file_name: str, range_notation: str, values: 
 
 
 #@mcp.tool()
-async def append_row(email: str, file_name: str, values: list, sheet_name: str = None) -> dict:
+async def append_row(email: str, file_name: str, values: list, sheet_name: str = "Sheet1") -> dict:
     """
     Description:
         Append a new row of data to the end of a sheet in a Google Sheets spreadsheet.
