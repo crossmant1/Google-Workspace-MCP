@@ -24,7 +24,7 @@ import mcpserver.config as config
 import mcpserver.database as database
 import mcpserver.auth as auth
 
-from mcpserver.mcp_tools import tools_drive, tools_gmail, tools_calendar, tools_tasks, tools_docs, tools_slides
+from mcpserver.mcp_tools import tools_drive, tools_gmail, tools_calendar, tools_tasks, tools_docs, tools_slides, tools_sheets
 
 from mcpserver.config import CLIENT_ID, CLIENT_SECRET, SCOPES, REDIRECT_URI
 from mcpserver.database import (
@@ -95,6 +95,25 @@ mcp.tool()(tools_slides.rename_presentation)
 mcp.tool()(tools_slides.duplicate_presentation)
 mcp.tool()(tools_slides.get_presentation_metadata)
 mcp.tool()(tools_slides.export_presentation_as_pdf)
+
+#--- Register Sheets Tools ---
+mcp.tool()(tools_sheets.read_spreadsheet)
+mcp.tool()(tools_sheets.read_range)
+mcp.tool()(tools_sheets.get_sheet_names)
+mcp.tool()(tools_sheets.get_spreadsheet_metadata)
+mcp.tool()(tools_sheets.update_cell)
+mcp.tool()(tools_sheets.update_range)
+mcp.tool()(tools_sheets.append_row)
+mcp.tool()(tools_sheets.clear_range)
+mcp.tool()(tools_sheets.create_sheet)
+mcp.tool()(tools_sheets.delete_sheet)
+mcp.tool()(tools_sheets.rename_sheet)
+mcp.tool()(tools_sheets.duplicate_sheet)
+mcp.tool()(tools_sheets.create_spreadsheet)
+mcp.tool()(tools_sheets.delete_spreadsheet)
+mcp.tool()(tools_sheets.rename_spreadsheet)
+mcp.tool()(tools_sheets.duplicate_spreadsheet)
+mcp.tool()(tools_sheets.find_in_sheet)
 
 # --- Compound Tools ---
 mcp.tool()(tools_tasks.create_task_from_email)
