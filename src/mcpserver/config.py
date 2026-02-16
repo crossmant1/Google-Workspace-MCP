@@ -52,7 +52,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/tasks",
     "https://www.googleapis.com/auth/spreadsheets",
-    "hettps://www.googleapis.com/auth/presentations"
+    "https://www.googleapis.com/auth/presentations"
 ]
 
 # Connection pool management
