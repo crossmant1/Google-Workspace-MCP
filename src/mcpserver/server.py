@@ -116,9 +116,6 @@ mcp.tool()(tools_sheets.duplicate_spreadsheet)
 mcp.tool()(tools_sheets.find_in_sheet)
 
 # --- Compound Tools ---
-mcp.tool()(tools_tasks.create_task_from_email)
-mcp.tool()(tools_tasks.add_emails_to_tasks)
-mcp.tool()(tools_tasks.create_task_from_email_search)
 mcp.tool()(tools_tasks.get_auth_status)
 
 # --- Register Auth Tools ---
