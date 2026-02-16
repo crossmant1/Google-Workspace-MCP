@@ -32,7 +32,7 @@ if missing_vars:
 # Encryption key for tokens
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 if not ENCRYPTION_KEY:
-    print("WARNING: No ENCRYPTION_KEY found, generating temporary key (DO NOT USE IN PRODUCTIuv add mysqlclientON)")
+    print("WARNING: No ENCRYPTION_KEY found, generating temporary key (DO NOT USE IN PRODUCTION)")
     ENCRYPTION_KEY = Fernet.generate_key()
 else:
     ENCRYPTION_KEY = ENCRYPTION_KEY.encode()
@@ -50,7 +50,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/calendar.events",
-    "https://www.googleapis.com/auth/tasks"
+    "https://www.googleapis.com/auth/tasks",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "hettps://www.googleapis.com/auth/presentations"
 ]
 
 # Connection pool management
