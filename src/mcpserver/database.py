@@ -152,16 +152,16 @@ def log_action(user_id: str, action: str, success: bool, source: str, details: s
             success_int = 1 if success else 0
             timestamp = datetime.utcnow()
             
-            # Convert user_id to int or None
             try:
-                user_id_int = int(user_id) if user_id else None
-            except (ValueError, TypeError):
-                user_id_int = None
+                json.loads(details) 
+                details_to_insert = details
+            except (json.JSONDecodeError, TypeError):
+                details_to_insert = json.dumps({"message": details})
             
             cursor.execute("""
                 INSERT INTO audit_logs (user_id, action, timestamp, success, ip_address, source, details)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (user_id_int, action, timestamp, success_int, ip_address, source, details))
+            """, (user_id, action, timestamp, success_int, ip_address, source, details_to_insert))
             conn.commit()
         finally:
             cursor.close()
