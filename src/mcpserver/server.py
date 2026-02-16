@@ -457,10 +457,13 @@ async def root(request: StarletteRequest):
         },
         "available_tools": [
             "Auth: check_google_auth - Check authentication status before using other tools",
-            "Drive: list_drive_files, search_drive_files, read_file_by_name, read_file_content, update_document_content, update_document_by_name",
+            "drive: list_drive_files, search_drive_files, read_file_by_name, read_file_content",
             "Gmail: list_emails, read_email, send_email, search_emails, mark_email_as_read, mark_email_as_unread",
             "Calendar: list_calendar_events, create_calendar_event, update_calendar_event, delete_calendar_event, search_calendar_events",
             "Tasks: list_task_lists, list_tasks, create_task, create_task_from_email, add_emails_to_tasks, create_task_from_email_search, update_task, complete_task, delete_task"
+            "Docs: create_document, delete_document, delete_document_by_name, append_to_document, append_to_document_by_name, insert_text_at_position, rename_document",
+            "Slides: read_presentation, list_slides, delete_presentation, rename_presentation, duplicate_presentation, get_presentation_metadata, export_presentation_as_pdf",
+            "Sheets: read_spreadsheet, read_range, get_sheet_names, get_spreadsheet_metadata, update_cell, update_range, append_row, clear_range, create_sheet, delete_sheet, rename_sheet, duplicate_sheet, create_spreadsheet, delete_spreadsheet, rename_spreadsheet, duplicate_spreadsheet, find_in_sheet"
         ],
         "usage": {
             "step_1": "AI Agent calls check_google_auth with user's email",
