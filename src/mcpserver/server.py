@@ -102,7 +102,7 @@ mcp.tool()(tools_sheets.read_range)
 mcp.tool()(tools_sheets.get_sheet_names)
 mcp.tool()(tools_sheets.get_spreadsheet_metadata)
 mcp.tool()(tools_sheets.update_cell)
-mcp.tool()(tools_sheets.update_range) # check
+mcp.tool()(tools_sheets.update_range)
 mcp.tool()(tools_sheets.append_row)
 mcp.tool()(tools_sheets.clear_range)
 mcp.tool()(tools_sheets.create_sheet)

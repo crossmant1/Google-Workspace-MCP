@@ -782,7 +782,7 @@ async def rename_sheet(email: str, file_name: str, old_sheet_name: str, new_shee
 
 
 #@mcp.tool()
-async def duplicate_sheet(email: str, file_name: str, sheet_name: str, new_sheet_name: str = None) -> dict:
+async def duplicate_sheet(email: str, file_name: str, sheet_name: str, new_sheet_name: str) -> dict:
     """
     Description:
         Duplicate a sheet within a Google Sheets spreadsheet.
@@ -790,7 +790,7 @@ async def duplicate_sheet(email: str, file_name: str, sheet_name: str, new_sheet
         email (str): The email of the user whose spreadsheet to modify.
         file_name (str): The name of the spreadsheet.
         sheet_name (str): The name of the sheet to duplicate.
-        new_sheet_name (str): Optional name for the duplicated sheet. If not provided, will be "Copy of [sheet_name]".
+        new_sheet_name (str): The name for the duplicated sheet.
     Returns:
         A dictionary indicating success or failure of the duplicate operation.
     """
@@ -1025,14 +1025,14 @@ async def rename_spreadsheet(email: str, file_name: str, new_title: str) -> dict
 
 
 #@mcp.tool()
-async def duplicate_spreadsheet(email: str, file_name: str, new_title: str = None) -> dict:
+async def duplicate_spreadsheet(email: str, file_name: str, new_title: str) -> dict:
     """
     Description:
         Create a copy of a Google Sheets spreadsheet.
     Args:
         email (str): The email of the user whose spreadsheet to duplicate.
         file_name (str): The name of the spreadsheet to duplicate.
-        new_title (str): Optional title for the duplicated spreadsheet. If not provided, will be "Copy of [file_name]".
+        new_title (str): The title for the duplicated spreadsheet.
     Returns:
         A dictionary containing the new spreadsheet's details or an error message.
     """
@@ -1090,7 +1090,7 @@ async def duplicate_spreadsheet(email: str, file_name: str, new_title: str = Non
 
 
 #@mcp.tool()
-async def find_in_sheet(email: str, file_name: str, search_value: str, sheet_name: str = None) -> dict:
+async def find_in_sheet(email: str, file_name: str, search_value: str, sheet_name: str) -> dict:
     """
     Description:
         Search for a specific value in a Google Sheets spreadsheet and return all matching cells.
@@ -1098,7 +1098,7 @@ async def find_in_sheet(email: str, file_name: str, search_value: str, sheet_nam
         email (str): The email of the user whose spreadsheet to search.
         file_name (str): The name of the spreadsheet to search.
         search_value (str): The value to search for.
-        sheet_name (str): Optional name of the sheet to search. If not provided, searches the first sheet.
+        sheet_name (str): The name of the sheet to search.
     Returns:
         A dictionary containing the matching cells or an error message.
     """
