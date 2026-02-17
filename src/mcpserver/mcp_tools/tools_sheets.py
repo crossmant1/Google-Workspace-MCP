@@ -103,7 +103,7 @@ async def read_spreadsheet(email: str, file_name: str, sheet_name: str = "Sheet1
             "data": values
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -162,7 +162,7 @@ async def read_range(email: str, file_name: str, range_notation: str) -> dict:
             "data": values
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -224,7 +224,7 @@ async def get_sheet_names(email: str, file_name: str) -> dict:
             "sheets": sheet_info
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -285,7 +285,7 @@ async def get_spreadsheet_metadata(email: str, file_name: str) -> dict:
             "owners": file_metadata.get("owners", [])
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -349,7 +349,7 @@ async def update_cell(email: str, file_name: str, cell_notation: str, value: str
             "message": "Cell updated successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -414,7 +414,7 @@ async def update_range(email: str, file_name: str, range_notation: str, values: 
             "message": "Range updated successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -487,7 +487,7 @@ async def append_row(email: str, file_name: str, values: list, sheet_name: str =
             "message": "Row appended successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -543,7 +543,7 @@ async def clear_range(email: str, file_name: str, range_notation: str) -> dict:
             "message": "Range cleared successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -611,7 +611,7 @@ async def create_sheet(email: str, file_name: str, sheet_name: str) -> dict:
             "message": "Sheet created successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -687,7 +687,7 @@ async def delete_sheet(email: str, file_name: str, sheet_name: str) -> dict:
             "message": "Sheet deleted successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -769,7 +769,7 @@ async def rename_sheet(email: str, file_name: str, old_sheet_name: str, new_shee
             "message": "Sheet renamed successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -851,7 +851,7 @@ async def duplicate_sheet(email: str, file_name: str, sheet_name: str, new_sheet
             "message": "Sheet duplicated successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -956,7 +956,7 @@ async def delete_spreadsheet(email: str, file_name: str) -> dict:
             "message": "Spreadsheet moved to trash successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -1012,7 +1012,7 @@ async def rename_spreadsheet(email: str, file_name: str, new_title: str) -> dict
             "message": "Spreadsheet renamed successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -1077,7 +1077,7 @@ async def duplicate_spreadsheet(email: str, file_name: str, new_title: str) -> d
             "message": "Spreadsheet duplicated successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
@@ -1160,7 +1160,7 @@ async def find_in_sheet(email: str, file_name: str, search_value: str, sheet_nam
             "matches": matches
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             response["note"] = file_info["note"]
         
