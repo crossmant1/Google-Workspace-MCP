@@ -139,7 +139,7 @@ async def read_presentation(email: str, file_name: str) -> dict:
         result = await _read_presentation_helper(user_id, file_id)
         result["user_id"] = user_id
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             result["note"] = file_info["note"]
         if "other_matches" in file_info:
@@ -211,7 +211,7 @@ async def list_slides(email: str, file_name: str) -> dict:
             "slides": slides_summary
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             result["note"] = file_info["note"]
         
@@ -264,7 +264,7 @@ async def delete_presentation(email: str, file_name: str) -> dict:
             "message": "Presentation moved to trash successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             result["note"] = file_info["note"]
         
@@ -320,7 +320,7 @@ async def rename_presentation(email: str, file_name: str, new_title: str) -> dic
             "message": "Presentation renamed successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             result["note"] = file_info["note"]
         
@@ -386,7 +386,7 @@ async def duplicate_presentation(email: str, file_name: str, new_title: str = No
             "message": "Presentation duplicated successfully"
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             result["note"] = file_info["note"]
         
@@ -446,7 +446,7 @@ async def get_presentation_metadata(email: str, file_name: str) -> dict:
             "owners": file_metadata.get("owners", [])
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             result["note"] = file_info["note"]
         
@@ -495,7 +495,7 @@ async def export_presentation_as_pdf(email: str, file_name: str) -> dict:
             "message": "PDF export link generated. You can download the PDF from the provided link."
         }
         
-        # Add note about multiple matches if applicable
+        
         if "note" in file_info:
             result["note"] = file_info["note"]
         
