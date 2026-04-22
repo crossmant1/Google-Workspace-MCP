@@ -42,7 +42,7 @@ from starlette.responses import JSONResponse as StarletteJSONResponse
 
 # import tools_tasks 
 # Initialize MCP
-mcp = FastMCP("Google Drive, Gmail, Calendar & Tasks MCP", host="127.0.0.1", port=8000)
+mcp = FastMCP("Google Drive, Gmail, Calendar & Tasks MCP", host="127.0.0.1", port=8000, stateless_http=True)
 
 # --- Register Drive Tools ---
 mcp.tool()(tools_drive.list_drive_files)
@@ -484,4 +484,4 @@ async def root(request: StarletteRequest):
 #)
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="streamable-http")
